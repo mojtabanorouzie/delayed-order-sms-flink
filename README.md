@@ -1,69 +1,106 @@
+# Delayed Order SMS Flink
+
+A project-based Apache Flink POC for detecting delayed orders in real time and emitting SMS commands for customer care.
+
+This repository is created as part of an internal Flink learning and design workshop.  
+The goal is to build an end-to-end local streaming system that simulates company order events, processes them with Apache Flink, detects delayed orders, and produces idempotent SMS command events.
+
+---
+
+## Problem Statement
+
+In our ordering platform, some customer orders may pass their expected delivery time without being delivered or cancelled.
+
+We want to detect these delayed orders in near real time and trigger a customer care SMS command such as:
+
+> "We are sorry for the delay. We are checking the issue with your order."
+
+This project does **not** send SMS directly.  
+Instead, it emits an idempotent command to a Kafka topic. A downstream notification service can consume that command and send the actual SMS.
+
+---
+
+## Goals
+
+- Build a local end-to-end stream processing environment.
+- Simulate realistic order events based on company event models.
+- Process order events using Apache Flink.
+- Detect orders that pass their expected delivery time.
+- Emit a `SEND_DELAY_SMS` command for delayed orders.
+- Avoid duplicate SMS commands.
+- Test the pipeline with different scenarios.
+- Practice Flink concepts such as:
+  - Kafka Source/Sink
+  - Keyed State
+  - Processing Time Timers
+  - Checkpointing
+  - Failure Recovery
+  - Savepoints
+  - Idempotency
+- Prepare a production proposal for implementing this system in the real environment.
+
+---
+
+## Non-Goals
+
+- Sending real SMS messages.
+- Connecting directly to external SMS providers from Flink.
+- Replacing the notification service.
+- Building a production-ready system in the first phase.
+- Handling all possible order lifecycle complexities from day one.
+
+---
+
+## High-Level Architecture
+
+```text
+Order Event Simulator
+        |
+        v
+Kafka Topic: order-events
+        |
+        v
+Apache Flink Job
+        |
+        v
+Kafka Topic: sms-commands
+        |
+        v
+Notification Service / SMS Orchestrator
+        |
+        v
+SMS Provider
+```
 In this POC, the Notification Service and SMS Provider are not implemented.
 The Flink job only produces SEND_DELAY_SMS commands into Kafka.
 
-Main Use Case
+## Main Use Case
 When an order is created, it has an expectedDeliveryTime.
 
 If the order is not delivered or cancelled before that time, the Flink job emits a delay SMS command.
 
 Example:
-
-text
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
+```
 ORDER_CREATED at 18:00
 expectedDeliveryTime = 18:45
-
+```
 If no ORDER_DELIVERED or ORDER_CANCELLED event is received before 18:45,
 emit SEND_DELAY_SMS command.
-Order Events
+
+## Order Events
 The input stream contains order lifecycle events.
 
 Supported event types:
-
-text
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
-6
+```
 ORDER_CREATED
 ORDER_ACCEPTED
 ORDER_PICKED_UP
 ORDER_DELIVERED
 ORDER_CANCELLED
 ORDER_ETA_UPDATED
+```
 Example ORDER_CREATED event:
-
-json
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-⌄
+```
 {
   "eventId": "evt-1001",
   "eventType": "ORDER_CREATED",
@@ -75,22 +112,9 @@ Copy
   "occurredAt": "2026-05-12T18:45:02Z",
   "schemaVersion": 1
 }
+```
 Example ORDER_DELIVERED event:
-
-json
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
-6
-7
-8
-⌄
+```
 {
   "eventId": "evt-1002",
   "eventType": "ORDER_DELIVERED",
@@ -99,28 +123,12 @@ Copy
   "occurredAt": "2026-05-12T19:20:05Z",
   "schemaVersion": 1
 }
-Output Command
+```
+## Output Command
 When an order is detected as delayed, the Flink job emits a command to the sms-commands topic.
 
 Example SEND_DELAY_SMS command:
-
-json
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-⌄
+```
 {
   "commandId": "ord-123:DELAY_SMS",
   "commandType": "SEND_DELAY_SMS",
@@ -132,100 +140,39 @@ Copy
   "createdAt": "2026-05-12T19:31:00Z",
   "schemaVersion": 1
 }
+```
 The commandId must be idempotent:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 commandId = orderId + ":DELAY_SMS"
+```
 This helps downstream services avoid sending duplicate SMS messages.
 
-Time Semantics
+## Time Semantics
 For this POC, the delay detection trigger is based on Processing Time.
 
-Reason:
+### Reason:
 
 The business question is:
 "Has the real current time passed the expected delivery time?"
 Therefore, the timer should fire based on wall-clock time.
 However, input events still include eventTime for observability, debugging, ordering analysis, and future event-time processing needs.
 
-Local Development Environment
+## Local Development Environment
 The local environment should include:
-
+```
 Apache Kafka
 Apache Flink JobManager
 Apache Flink TaskManager
 Kafka UI / Redpanda Console
 Order Event Simulator
 Flink Delay Detector Job
+```
 Expected local flow:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 Simulator -> Kafka -> Flink -> Kafka
+```
 Repository Structure
-text
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
-14
-15
-16
-17
-18
-19
-20
-21
-22
-23
-24
-25
-26
-27
-28
-29
-30
-31
-32
-33
-34
-35
-36
-37
-38
-39
-40
-41
-42
-43
-44
-45
-46
-47
-48
-49
+```
 delayed-order-sms-flink/
   README.md
   docker-compose.yml
@@ -275,52 +222,28 @@ delayed-order-sms-flink/
 
   proposal/
     production-proposal.md
-Kafka Topics
+```
+## Kafka Topics
 The POC uses the following Kafka topics:
-
-text
-
-Collapse
-Save
-Copy
-1
-2
-3
+```
 order-events
 sms-commands
 dead-letter-events
-order-events
+```
+### order-events
 Input topic for order lifecycle events.
 
-sms-commands
+### sms-commands
 Output topic for SMS command events.
 
-dead-letter-events
+### dead-letter-events
 Invalid, malformed, or unsupported events can be routed here.
 
-Processing Logic
+### Processing Logic
 The Flink job processes events keyed by orderId.
 
 Simplified flow:
-
-text
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
+```
 Kafka Source: order-events
         |
         v
@@ -334,21 +257,9 @@ KeyedProcessFunction
         |
         v
 Kafka Sink: sms-commands
+```
 For each order, the job keeps state such as:
-
-text
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
-6
-7
-8
+```
 orderId
 customerId
 storeId
@@ -357,6 +268,7 @@ expectedDeliveryTime
 delaySmsEmitted
 lastEventTime
 registeredTimerTime
+```
 On ORDER_CREATED
 Store order information in keyed state.
 Register a processing-time timer for expectedDeliveryTime.
@@ -373,249 +285,132 @@ Read the order state.
 If the order is not delivered and not cancelled:
 Emit SEND_DELAY_SMS.
 Mark delaySmsEmitted = true.
-Simulator Scenarios
+## Simulator Scenarios
 The simulator should support the following scenarios:
 
 1. On-Time Order
 Order is created and delivered before expected delivery time.
 
 Expected result:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 No SMS command should be emitted.
+```
 2. Delayed Order
 Order is created but not delivered before expected delivery time.
 
 Expected result:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 One SEND_DELAY_SMS command should be emitted.
+```
 3. Cancelled Order
 Order is created and cancelled before expected delivery time.
 
 Expected result:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 No SMS command should be emitted.
+```
 4. Duplicate Events
 Same event is sent more than once.
 
 Expected result:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 No duplicate SMS command should be emitted.
+```
 5. Out-of-Order Events
 Events arrive in a different order than their actual event time.
 
 Expected result:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 System should behave according to the defined business rules.
+```
 6. ETA Updated Order
 Order expected delivery time is updated.
 
 Expected result:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 Timer should be updated based on the latest expectedDeliveryTime.
-Running Locally
+```
+## Running Locally
 Commands may be updated as the project evolves.
 
 Start Local Infrastructure
-bash
-
-Collapse
-Save
-Copy
-1
+```
 docker compose up -d
+```
 Check Containers
-bash
-
-Collapse
-Save
-Copy
-1
+```
 docker compose ps
+```
 Open Flink UI
-text
-
-Collapse
-Save
-Copy
-1
+```
 http://localhost:8081
+```
 Open Kafka UI
-text
-
-Collapse
-Save
-Copy
-1
+```
 http://localhost:8080
+```
 Running the Simulator
 Example commands:
-
-bash
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
-6
+```
 make simulate-on-time-order
 make simulate-delayed-order
 make simulate-cancelled-order
 make simulate-duplicates
 make simulate-out-of-order
 make simulate-eta-updated-order
+```
 Running the Flink Job
 Example:
-
-bash
-
-Collapse
-Save
-Copy
-1
-2
+```
 make build-flink-job
 make submit-flink-job
+```
 Or manually:
-
-bash
-
-Collapse
-Save
-Copy
-1
-2
+```
 cd flink-job
 mvn clean package
+```
 Then submit the generated JAR to the local Flink cluster.
 
-Testing the Pipeline
+## Testing the Pipeline
 Test: Delayed Order
 Start local environment:
-bash
-
-Collapse
-Save
-Copy
-1
+```
 docker compose up -d
+```
 Submit Flink job.
 Run delayed order scenario:
-bash
-
-Collapse
-Save
-Copy
-1
+```
 make simulate-delayed-order
+```
 Check sms-commands topic.
 Expected output:
-
-json
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-⌄
+```
 {
   "commandId": "ord-xxx:DELAY_SMS",
   "commandType": "SEND_DELAY_SMS"
 }
+```
 Test: On-Time Order
-bash
-
-Collapse
-Save
-Copy
-1
+```
 make simulate-on-time-order
+```
 Expected result:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 No SEND_DELAY_SMS command should be emitted.
+```
 Test: Cancelled Order
-bash
-
-Collapse
-Save
-Copy
-1
+```
 make simulate-cancelled-order
+```
 Expected result:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 No SEND_DELAY_SMS command should be emitted.
 Failure Recovery Test
 This project should verify that state and timers survive failure when checkpointing is enabled.
-
+```
 Basic scenario:
-
-text
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
-6
-7
-8
+```
 1. Start Kafka and Flink.
 2. Submit Flink job.
 3. Produce ORDER_CREATED with expectedDeliveryTime = now + 2 minutes.
@@ -624,15 +419,11 @@ Copy
 6. Recover from checkpoint or savepoint.
 7. Wait until expectedDeliveryTime passes.
 8. Verify that only one SEND_DELAY_SMS command is emitted.
+```
 Details should be documented in:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 docs/runbooks/failure-test-runbook.md
+```
 Checkpointing
 The Flink job should enable checkpointing for fault tolerance.
 
@@ -642,34 +433,24 @@ State recovery
 Timer recovery
 Kafka offset recovery
 No duplicate SMS commands after restart
-Idempotency
+## Idempotency
 Duplicate SMS must be avoided at two levels:
 
 1. Inside Flink
 The Flink state contains:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 delaySmsEmitted = true
+```
 After the SMS command is emitted once, the job should not emit it again for the same order.
 
 2. Downstream Notification Service
 The output command contains an idempotent key:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 commandId = orderId + ":DELAY_SMS"
+```
 The SMS consumer should deduplicate based on this commandId.
 
-Production Considerations
+## Production Considerations
 The production proposal should cover:
 
 Architecture
@@ -689,29 +470,19 @@ Replay strategy
 Rollback strategy
 Risks and mitigations
 The final proposal should be located at:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 proposal/production-proposal.md
-Important Production Note
+```
+## Important Production Note
 Flink should not call the SMS provider directly.
 
 Recommended production flow:
-
-text
-
-Collapse
-Save
-Copy
-1
+```
 Flink -> Kafka sms-commands -> Notification Service -> SMS Provider
+```
 This keeps the Flink job focused on stream processing and avoids tight coupling with external providers, rate limits, retries, and SMS delivery concerns.
 
-Workshop Outcome
+## Workshop Outcome
 By the end of the workshop, this repository should contain:
 
 A working local streaming environment.
@@ -722,7 +493,7 @@ Scenario-based tests.
 Failure recovery experiments.
 Technical design documents.
 Production proposal.
-Contribution Guidelines
+## Contribution Guidelines
 Every team member should contribute through Pull Requests.
 
 Each PR should include:
@@ -733,25 +504,15 @@ How it was tested.
 Related issue number.
 Screenshots or logs if useful.
 Example branch names:
-
-text
-
-Collapse
-Save
-Copy
-1
-2
-3
-4
-5
-6
+```
 feature/docker-compose-local-env
 feature/order-event-simulator
 feature/flink-kafka-source
 feature/delay-detector-state-timer
 docs/production-proposal
 fix/simulator-duplicate-events
-Definition of Done
+```
+## Definition of Done
 The POC is considered complete when:
 
 Local environment starts successfully.
@@ -767,41 +528,9 @@ Checkpointing is enabled.
 Failure recovery is tested.
 README and runbooks are updated.
 Production proposal is prepared.
-License
+
+## License
 Internal use only.
 
-Maintainers
+## Maintainers
 TBD
-
-Status
-text
-
-Collapse
-Save
-Copy
-1
-POC / Workshop Project
-
-Collapse
-
-Run
-Save
-Copy
-1
-2
-3
-4
-5
-6
-7
-8
-9
-
----
-
-# GitHub/GitLab Short Description
-
-برای فیلد description خود repo این را بگذار:
-
-```text
-Flink-based POC for real-time delayed order detection and idempotent SMS command generation from Kafka order events.

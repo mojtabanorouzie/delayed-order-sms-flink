@@ -1,242 +1,68 @@
 # Order Event Simulator
 
-The simulator is responsible for generating realistic order update events and publishing them to Kafka for local and end-to-end testing of the delayed order detection pipeline.
+The Order Event Simulator generates realistic order state updates and publishes them to Kafka for local and end-to-end testing of the delayed order detection pipeline.
 
-It simulates the behavior of the company order stream where each order update produces a new event containing the latest known state of the order.
+This simulator follows the current order stream model:
+
+- Source topic: `Orders`
+- Topic type: compacted
+- Kafka message key: `orderId`
+- Kafka message value: full latest order state
+- Every order update produces a new event/message
 
 ---
 
 ## Purpose
 
-The simulator is used to validate the Flink pipeline against controlled and repeatable order scenarios.
+The simulator is used to validate the Flink pipeline with controlled, repeatable scenarios.
 
-It should support:
+It supports:
 
-- Producing a configurable number of orders.
-- Publishing order updates to Kafka.
-- Simulating all required business scenarios.
-- Testing failure and recovery behavior.
-- Supporting local development and workshop exercises.
+- Generating a configurable number of orders.
+- Publishing order state updates to Kafka.
+- Simulating normal and edge-case order flows.
+- Testing duplicate and out-of-order updates.
+- Supporting Flink failure and recovery tests.
+- Running in dry-run mode without Kafka.
 
 ---
 
-## Source Topic Model
+## Topic Model
 
-The simulator publishes events to the Kafka topic:
+The simulator publishes to:
 
-```
+```text
 Orders
 ```
 
-The `Orders` topic is a **compacted topic**.
+The `Orders` topic is expected to be a compacted Kafka topic.
 
-Each Kafka message should be keyed by:
+Each message must be keyed by:
 
 ```text
 orderId
 ```
 
-Each message value should contain the **latest state of the order** at the time of the update.
+Each message value must contain the complete latest state of the order.
 
-This means that whenever an order changes, the simulator must publish a new event with the updated order state.
-
-Example:
+Example lifecycle:
 
 ```text
-Order created       -> publish latest order state
-Order accepted      -> publish latest order state
-Order picked up     -> publish latest order state
-Order delivered     -> publish latest order state
-Order cancelled     -> publish latest order state
-ETA updated         -> publish latest order state
+Order created   -> publish full order state with status CREATED
+Order accepted  -> publish full order state with status ACCEPTED
+Order picked up -> publish full order state with status PICKED_UP
+Order delivered -> publish full order state with status DELIVERED
+Order cancelled -> publish full order state with status CANCELLED
+ETA updated     -> publish full order state with updated expectedDeliveryTime
 ```
 
-The Flink job consumes this topic and detects delayed orders based on the latest order state.
+The simulator does not publish partial/delta events.
 
 ---
 
-## Event Production Rule
+## Event Contract
 
-For every order update, the simulator must emit one event.
-
-The emitted event should represent the complete latest state of the order, not only the changed fields.
-
-Example flow:
-
-```text
-ORDER_CREATED
-ORDER_ACCEPTED
-ORDER_PICKED_UP
-ORDER_DELIVERED
-```
-
-The simulator should publish one event for each state change.
-
----
-
-## Configuration
-
-The simulator must be configurable.
-
-Minimum required configuration:
-
-| Config | Description | Default |
-|---|---|---|
-| `KAFKA_BOOTSTRAP_SERVERS` | Kafka bootstrap servers | `localhost:9092` |
-| `ORDERS_TOPIC` | Target Kafka topic | `Orders` |
-| `ORDERS_COUNT` | Number of orders to generate | `100` |
-| `SCENARIO` | Scenario name to execute | `mixed` |
-| `EVENT_DELAY_MS` | Delay between generated events | `500` |
-| `ORDER_ID_PREFIX` | Prefix for generated order IDs | `ord` |
-
-Example:
-
-```bash
-ORDERS_COUNT=100 \
-SCENARIO=mixed \
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
-ORDERS_TOPIC=Orders \
-./run-simulator.sh
-```
-
----
-
-## Required Scenarios
-
-The simulator must support the following scenarios.
-
-### 1. On-Time Orders
-
-Orders are created and delivered before their expected delivery time.
-
-Expected result:
-
-```text
-No delay SMS command should be emitted.
-```
-
----
-
-### 2. Delayed Orders
-
-Orders are created but are not delivered or cancelled before their expected delivery time.
-
-Expected result:
-
-```text
-One delay SMS command should be emitted per delayed order.
-```
-
----
-
-### 3. Cancelled Orders
-
-Orders are created and cancelled before their expected delivery time.
-
-Expected result:
-
-```text
-No delay SMS command should be emitted.
-```
-
----
-
-### 4. ETA Updated Orders
-
-Orders receive an updated expected delivery time.
-
-Expected result:
-
-```text
-The Flink job should use the latest expected delivery time.
-```
-
----
-
-### 5. Duplicate Events
-
-The same order state is published more than once.
-
-Expected result:
-
-```text
-Duplicate events must not produce duplicate SMS commands.
-```
-
----
-
-### 6. Out-of-Order Updates
-
-Order updates are published in an unexpected order.
-
-Expected result:
-
-```text
-The pipeline should not crash.
-Behavior must follow the documented business rules.
-```
-
----
-
-### 7. Mixed Scenario
-
-The simulator generates a mix of all supported scenarios across a configurable number of orders.
-
-Example:
-
-```text
-ORDERS_COUNT=100
-SCENARIO=mixed
-```
-
-Expected result:
-
-```text
-The pipeline should correctly process all order types in one run.
-```
-
----
-
-## Failure Testing Capabilities
-
-The simulator should support failure and recovery testing.
-
-Required capabilities:
-
-- Generate orders with future expected delivery times.
-- Pause after producing initial order states.
-- Resume producing updates after a delay.
-- Re-publish duplicate events after restart.
-- Replay a scenario from the beginning.
-- Produce events slowly enough to allow manual Flink failure testing.
-
-These capabilities are required to test:
-
-- Flink checkpoint recovery.
-- Timer recovery.
-- Duplicate prevention.
-- Kafka offset recovery.
-- Idempotent SMS command generation.
-
-Example failure test flow:
-
-```text
-1. Start Kafka and Flink.
-2. Start the simulator with delayed orders.
-3. Produce orders with expectedDeliveryTime = now + 2 minutes.
-4. Stop or restart the Flink job before the timer fires.
-5. Restart the Flink job.
-6. Wait until expectedDeliveryTime passes.
-7. Verify that only one SMS command is emitted per delayed order.
-```
-
----
-
-## Expected Event Structure
-
-Each event should contain the latest order state.
-
-Example:
+Each produced message value should follow this structure:
 
 ```json
 {
@@ -245,8 +71,19 @@ Example:
   "storeId": "store-001",
   "status": "ACCEPTED",
   "expectedDeliveryTime": "2026-05-12T19:30:00Z",
-  "lastUpdatedAt": "2026-05-12T18:45:02Z",
-  "eventTime": "2026-05-12T18:45:00Z",
+  "createdAt": "2026-05-12T18:45:00Z",
+  "lastUpdatedAt": "2026-05-12T18:45:10Z",
+  "eventTime": "2026-05-12T18:45:10Z",
+  "stateLogs": [
+    {
+      "status": "CREATED",
+      "at": "2026-05-12T18:45:00Z"
+    },
+    {
+      "status": "ACCEPTED",
+      "at": "2026-05-12T18:45:10Z"
+    }
+  ],
   "schemaVersion": 1
 }
 ```
@@ -259,62 +96,701 @@ Required fields:
 | `customerId` | Customer identifier |
 | `storeId` | Store identifier |
 | `status` | Latest order status |
-| `expectedDeliveryTime` | Current expected delivery time |
-| `lastUpdatedAt` | Time of latest update |
+| `expectedDeliveryTime` | Current expected delivery deadline |
+| `createdAt` | Order creation time |
+| `lastUpdatedAt` | Time of the latest state update |
 | `eventTime` | Business event time |
+| `stateLogs` | Historical state changes for the order |
 | `schemaVersion` | Schema version |
 
 ---
 
-## Running the Simulator
+## Supported Statuses
 
-From the project root:
+The simulator currently supports these order statuses:
+
+```text
+CREATED
+ACCEPTED
+PICKED_UP
+DELIVERED
+CANCELLED
+```
+
+ETA changes are represented by publishing a new full order state with an updated `expectedDeliveryTime`.
+
+---
+
+## Project Structure
+
+```text
+simulator/
+  README.md
+  requirements.txt
+
+  scenarios/
+    README.md
+    on-time-orders.json
+    delayed-orders.json
+    cancelled-orders.json
+    eta-updated-orders.json
+    duplicate-events.json
+    out-of-order-updates.json
+    failure-recovery.json
+    mixed-orders.json
+
+  src/
+    order_simulator/
+      __init__.py
+      main.py
+      config.py
+      scenario_loader.py
+      template_renderer.py
+      time_utils.py
+      kafka_producer.py
+      runner.py
+```
+
+---
+
+## Configuration
+
+The simulator can be configured using environment variables or CLI arguments.
+
+| Variable | Default | Description |
+|---|---|---|
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka bootstrap servers |
+| `ORDERS_TOPIC` | `Orders` | Target Kafka topic |
+| `SCENARIO` | `mixed-orders` | Scenario file name without `.json` |
+| `ORDERS_COUNT` | `100` | Number of orders to generate |
+| `ORDER_ID_PREFIX` | `ord` | Prefix for generated order IDs |
+| `EVENT_DELAY_MULTIPLIER` | `1.0` | Multiplier for delays defined in scenario files |
+| `DRY_RUN` | `false` | Print messages instead of publishing to Kafka |
+| `RANDOM_SEED` | `42` | Random seed for deterministic mixed scenarios |
+| `MAX_WORKERS` | `10` | Number of concurrent workers |
+| `PAUSE_AFTER_STEP` | `0` | Step number to pause after, mainly for failure tests |
+| `PAUSE_DURATION_SECONDS` | `0` | Pause duration for failure tests |
+
+Example:
+
+```bash
+SCENARIO=delayed-orders \
+ORDERS_COUNT=100 \
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
+ORDERS_TOPIC=Orders \
+PYTHONPATH=src python -m order_simulator.main
+```
+
+---
+
+## CLI Arguments
+
+The simulator also supports CLI arguments:
+
+```bash
+PYTHONPATH=src python -m order_simulator.main \
+  --scenario delayed-orders \
+  --orders-count 100 \
+  --kafka-bootstrap-servers localhost:9092 \
+  --orders-topic Orders
+```
+
+Available arguments:
+
+| Argument | Description |
+|---|---|
+| `--scenario` | Scenario name from `simulator/scenarios` without `.json` |
+| `--orders-count` | Number of orders to generate |
+| `--kafka-bootstrap-servers` | Kafka bootstrap servers |
+| `--orders-topic` | Kafka target topic |
+| `--dry-run` | Print generated messages instead of publishing to Kafka |
+
+---
+
+## Installation
+
+From the `simulator` directory:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Required dependency:
+
+```text
+confluent-kafka
+```
+
+---
+
+## Running in Dry-Run Mode
+
+Use dry-run mode to verify generated messages without Kafka.
+
+```bash
+PYTHONPATH=src python -m order_simulator.main \
+  --scenario delayed-orders \
+  --orders-count 2 \
+  --dry-run
+```
+
+Expected output:
+
+```json
+{
+  "topic": "Orders",
+  "key": "ord-delayed-orders-0001",
+  "value": {
+    "orderId": "ord-delayed-orders-0001",
+    "customerId": "cus-0001",
+    "storeId": "store-001",
+    "status": "CREATED",
+    "expectedDeliveryTime": "2026-05-12T19:30:00Z",
+    "createdAt": "2026-05-12T19:29:00Z",
+    "lastUpdatedAt": "2026-05-12T19:29:00Z",
+    "eventTime": "2026-05-12T19:29:00Z",
+    "stateLogs": [
+      {
+        "status": "CREATED",
+        "at": "2026-05-12T19:29:00Z"
+      }
+    ],
+    "schemaVersion": 1
+  }
+}
+```
+
+---
+
+## Running Against Kafka
+
+Start local infrastructure from the repository root:
+
+```bash
+docker compose up -d
+```
+
+Then run the simulator:
+
+```bash
+cd simulator
+
+PYTHONPATH=src python -m order_simulator.main \
+  --scenario mixed-orders \
+  --orders-count 100 \
+  --kafka-bootstrap-servers localhost:9092 \
+  --orders-topic Orders
+```
+
+---
+
+## Supported Scenarios
+
+Scenario files are located in:
+
+```text
+simulator/scenarios/
+```
+
+### 1. On-Time Orders
+
+File:
+
+```text
+on-time-orders.json
+```
+
+Description:
+
+Orders are created and delivered before `expectedDeliveryTime`.
+
+Expected result:
+
+```text
+No delay SMS command should be emitted.
+```
+
+---
+
+### 2. Delayed Orders
+
+File:
+
+```text
+delayed-orders.json
+```
+
+Description:
+
+Orders are created but are not delivered or cancelled before `expectedDeliveryTime`.
+
+Expected result:
+
+```text
+One delay SMS command should be emitted per delayed order.
+```
+
+---
+
+### 3. Cancelled Orders
+
+File:
+
+```text
+cancelled-orders.json
+```
+
+Description:
+
+Orders are created and cancelled before `expectedDeliveryTime`.
+
+Expected result:
+
+```text
+No delay SMS command should be emitted.
+```
+
+---
+
+### 4. ETA Updated Orders
+
+File:
+
+```text
+eta-updated-orders.json
+```
+
+Description:
+
+Orders receive a new `expectedDeliveryTime`.
+
+Expected result:
+
+```text
+The Flink job should use the latest expectedDeliveryTime.
+```
+
+---
+
+### 5. Duplicate Events
+
+File:
+
+```text
+duplicate-events.json
+```
+
+Description:
+
+The same full order state is published more than once.
+
+Expected result:
+
+```text
+Duplicate order updates must not produce duplicate SMS commands.
+```
+
+---
+
+### 6. Out-of-Order Updates
+
+File:
+
+```text
+out-of-order-updates.json
+```
+
+Description:
+
+Order snapshots are published in an unexpected order.
+
+Expected result:
+
+```text
+The pipeline must not crash. Behavior should follow the documented business rules.
+```
+
+---
+
+### 7. Failure Recovery
+
+File:
+
+```text
+failure-recovery.json
+```
+
+Description:
+
+Produces orders with future `expectedDeliveryTime` to support manual Flink failure and recovery testing.
+
+Expected result:
+
+```text
+After Flink recovery, exactly one delay SMS command should be emitted per delayed order.
+```
+
+---
+
+### 8. Mixed Orders
+
+File:
+
+```text
+mixed-orders.json
+```
+
+Description:
+
+Generates a configurable mix of all supported scenarios.
+
+Expected result:
+
+```text
+SMS commands should only be emitted for orders that are actually delayed.
+```
+
+---
+
+## Scenario File Format
+
+Each scenario file defines a sequence of full order snapshots.
+
+Example:
+
+```json
+{
+  "scenarioName": "delayed-orders",
+  "description": "Orders are created and accepted but not delivered or cancelled before expected delivery time.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 100,
+  "events": [
+    {
+      "step": 1,
+      "delayAfterPreviousEventMs": 0,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "CREATED",
+        "expectedDeliveryTime": "now+60s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now",
+        "eventTime": "now",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    }
+  ],
+  "expectedResult": {
+    "smsCommandExpected": true,
+    "expectedSmsCommandCountPerOrder": 1
+  }
+}
+```
+
+---
+
+## Dynamic Time Expressions
+
+Scenario files may use dynamic time expressions.
+
+Supported examples:
+
+```text
+now
+now+500ms
+now+10s
+now+2m
+now+1h
+now+1d
+now-10s
+```
+
+The simulator resolves these values to real UTC ISO-8601 timestamps before publishing to Kafka.
+
+Example:
+
+```json
+{
+  "expectedDeliveryTime": "now+60s"
+}
+```
+
+May become:
+
+```json
+{
+  "expectedDeliveryTime": "2026-05-12T19:30:00Z"
+}
+```
+
+---
+
+## Template Variables
+
+Scenario files may use template variables.
+
+Supported variables:
+
+```text
+{{orderId}}
+{{customerId}}
+{{storeId}}
+```
+
+Example:
+
+```json
+{
+  "orderId": "{{orderId}}",
+  "customerId": "{{customerId}}",
+  "storeId": "{{storeId}}"
+}
+```
+
+For each generated order, the simulator replaces these values with deterministic IDs.
+
+Example generated IDs:
+
+```text
+orderId: ord-delayed-orders-0001
+customerId: cus-0001
+storeId: store-001
+```
+
+---
+
+## Duplicate Events
+
+Duplicate events are defined using `duplicateOfStep`.
+
+Example:
+
+```json
+{
+  "step": 2,
+  "delayAfterPreviousEventMs": 500,
+  "messageKey": "{{orderId}}",
+  "duplicateOfStep": 1
+}
+```
+
+This republishes the same full order state generated at step `1`.
+
+---
+
+## Mixed Scenario
+
+The mixed scenario distributes generated orders across multiple scenario types.
+
+Example:
+
+```json
+{
+  "scenarioName": "mixed-orders",
+  "defaultOrderCount": 100,
+  "distribution": {
+    "onTimePercentage": 35,
+    "delayedPercentage": 25,
+    "cancelledPercentage": 15,
+    "etaUpdatedPercentage": 10,
+    "duplicatePercentage": 10,
+    "outOfOrderPercentage": 5
+  },
+  "includedScenarios": [
+    "on-time-orders",
+    "delayed-orders",
+    "cancelled-orders",
+    "eta-updated-orders",
+    "duplicate-events",
+    "out-of-order-updates"
+  ]
+}
+```
+
+Run:
+
+```bash
+PYTHONPATH=src python -m order_simulator.main \
+  --scenario mixed-orders \
+  --orders-count 100
+```
+
+---
+
+## Failure Testing
+
+The simulator supports failure testing through pause configuration.
+
+Example:
+
+```bash
+SCENARIO=failure-recovery \
+ORDERS_COUNT=100 \
+PAUSE_AFTER_STEP=2 \
+PAUSE_DURATION_SECONDS=60 \
+PYTHONPATH=src python -m order_simulator.main
+```
+
+Suggested failure test flow:
+
+```text
+1. Start Kafka and Flink.
+2. Start the Flink job.
+3. Run the failure-recovery simulator scenario.
+4. Wait until initial order states are consumed and timers are registered.
+5. Stop or restart the Flink job before expectedDeliveryTime.
+6. Restore the Flink job from checkpoint or savepoint.
+7. Wait until expectedDeliveryTime passes.
+8. Verify that only one SMS command is emitted per delayed order.
+```
+
+This validates:
+
+- Flink state recovery
+- Timer recovery
+- Kafka offset recovery
+- Duplicate prevention
+- Idempotent SMS command generation
+
+---
+
+## Suggested Makefile Commands
+
+From the repository root:
 
 ```bash
 make simulate
-```
-
-Run with custom order count:
-
-```bash
-ORDERS_COUNT=100 make simulate
-```
-
-Run a specific scenario:
-
-```bash
-SCENARIO=delayed ORDERS_COUNT=100 make simulate
-```
-
-Suggested scenario commands:
-
-```bash
+make simulate-dry-run
 make simulate-on-time
 make simulate-delayed
 make simulate-cancelled
 make simulate-eta-updated
 make simulate-duplicates
 make simulate-out-of-order
+make simulate-failure-recovery
 make simulate-mixed
+```
+
+Example with custom order count:
+
+```bash
+ORDERS_COUNT=100 make simulate-mixed
+```
+
+Example dry-run:
+
+```bash
+ORDERS_COUNT=3 make simulate-dry-run
 ```
 
 ---
 
-## Verification
+## Verifying Produced Events
 
-After running the simulator, verify that events are published to:
+Using Kafka UI:
+
+```text
+http://localhost:8080
+```
+
+Open topic:
 
 ```text
 Orders
 ```
 
-The Flink job should consume from `Orders` and emit delay SMS commands only when required.
+Or use Kafka CLI:
 
-Output should be verified in:
+```bash
+docker exec -it kafka kafka-console-consumer \
+  --bootstrap-server localhost:9092 \
+  --topic Orders \
+  --from-beginning \
+  --property print.key=true
+```
+
+The key should be the order ID:
+
+```text
+ord-delayed-orders-0001
+```
+
+The value should be the full latest order state.
+
+---
+
+## Verifying Flink Output
+
+The Flink job consumes from:
+
+```text
+Orders
+```
+
+And should emit delay SMS commands to:
 
 ```text
 sms-commands
 ```
+
+For delayed orders, expected output:
+
+```json
+{
+  "commandId": "ord-delayed-orders-0001:DELAY_SMS",
+  "commandType": "SEND_DELAY_SMS",
+  "orderId": "ord-delayed-orders-0001",
+  "reason": "ORDER_DELAYED",
+  "schemaVersion": 1
+}
+```
+
+For on-time and cancelled orders:
+
+```text
+No SEND_DELAY_SMS command should be emitted.
+```
+
+---
+
+## Development Guidelines
+
+When adding a new scenario:
+
+1. Add a new JSON file under `simulator/scenarios/`.
+2. Use full order state snapshots.
+3. Use `orderId` as the Kafka message key.
+4. Use dynamic time expressions where possible.
+5. Add expected results to the scenario file.
+6. Update this README if the scenario introduces new behavior.
+7. Validate the scenario with dry-run mode before publishing to Kafka.
+
+---
+
+## Important Rules
+
+The simulator must follow these rules:
+
+- Publish to the `Orders` topic.
+- Use `orderId` as the Kafka message key.
+- Publish full latest order state on every update.
+- Do not publish partial update events.
+- Keep generated data deterministic enough for repeatable tests.
+- Support `ORDERS_COUNT`, defaulting to `100`.
+- Support all required scenarios.
+- Support failure and recovery testing.
 
 ---
 
@@ -322,14 +798,15 @@ sms-commands
 
 The simulator is complete when:
 
-- It can generate a configurable number of orders, defaulting to `100`.
-- It publishes events to the compacted `Orders` topic.
+- It can generate a configurable number of orders.
+- Default order count is `100`.
+- It publishes to the compacted `Orders` topic.
 - Kafka message key is `orderId`.
-- Each event contains the latest full order state.
-- Every order update produces a new event.
+- Each Kafka message value contains the full latest order state.
+- Every order update produces a new message.
 - All required scenarios are supported.
 - Mixed scenario can generate multiple scenario types in one run.
+- Duplicate and out-of-order scenarios are supported.
 - Failure and recovery testing flows are supported.
-- Generated events are deterministic enough for repeatable tests.
+- Dry-run mode works without Kafka.
 - Usage and configuration are documented.
-```

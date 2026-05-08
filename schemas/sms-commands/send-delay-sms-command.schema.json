@@ -1,1 +1,62 @@
-
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/sms-commands/send-delay-sms-command.schema.json",
+  "title": "Send Delay SMS Command",
+  "description": "Command emitted by the Flink job when an order is detected as delayed.",
+  "type": "object",
+  "required": [
+    "commandId",
+    "commandType",
+    "orderId",
+    "customerId",
+    "storeId",
+    "reason",
+    "expectedDeliveryTime",
+    "createdAt",
+    "schemaVersion"
+  ],
+  "properties": {
+    "commandId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Idempotent command identifier. Format: orderId + ':DELAY_SMS'.",
+      "pattern": "^.+:DELAY_SMS$"
+    },
+    "commandType": {
+      "type": "string",
+      "const": "SEND_DELAY_SMS"
+    },
+    "orderId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "customerId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "storeId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "ORDER_DELAYED"
+      ]
+    },
+    "expectedDeliveryTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Command creation timestamp."
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "additionalProperties": false
+}

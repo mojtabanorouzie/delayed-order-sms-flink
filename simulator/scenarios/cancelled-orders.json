@@ -1,6 +1,6 @@
 {
-  "scenarioName": "duplicate-events",
-  "description": "The same latest order state is published more than once. Duplicate events must not produce duplicate SMS commands.",
+  "scenarioName": "cancelled-orders",
+  "description": "Orders are created and cancelled before expected delivery time.",
   "topic": "Orders",
   "topicType": "compacted",
   "keyField": "orderId",
@@ -15,7 +15,7 @@
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "CREATED",
-        "expectedDeliveryTime": "now+60s",
+        "expectedDeliveryTime": "now+120s",
         "createdAt": "now",
         "lastUpdatedAt": "now",
         "eventTime": "now",
@@ -30,46 +30,33 @@
     },
     {
       "step": 2,
-      "delayAfterPreviousEventMs": 500,
-      "messageKey": "{{orderId}}",
-      "duplicateOfStep": 1
-    },
-    {
-      "step": 3,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
-        "status": "ACCEPTED",
-        "expectedDeliveryTime": "now+60s",
+        "status": "CANCELLED",
+        "expectedDeliveryTime": "now+120s",
         "createdAt": "now",
-        "lastUpdatedAt": "now+10s",
-        "eventTime": "now+10s",
+        "lastUpdatedAt": "now+30s",
+        "eventTime": "now+30s",
         "stateLogs": [
           {
             "status": "CREATED",
             "at": "now"
           },
           {
-            "status": "ACCEPTED",
-            "at": "now+10s"
+            "status": "CANCELLED",
+            "at": "now+30s"
           }
         ],
         "schemaVersion": 1
       }
-    },
-    {
-      "step": 4,
-      "delayAfterPreviousEventMs": 500,
-      "messageKey": "{{orderId}}",
-      "duplicateOfStep": 3
     }
   ],
   "expectedResult": {
-    "smsCommandExpected": true,
-    "expectedSmsCommandCountPerOrder": 1,
-    "description": "At most one SEND_DELAY_SMS command should be emitted per order."
+    "smsCommandExpected": false,
+    "description": "No SEND_DELAY_SMS command should be emitted for cancelled orders."
   }
 }

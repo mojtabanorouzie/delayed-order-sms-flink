@@ -1,10 +1,11 @@
 {
-  "scenarioName": "duplicate-events",
-  "description": "The same latest order state is published more than once. Duplicate events must not produce duplicate SMS commands.",
+  "scenarioName": "failure-recovery",
+  "description": "Orders are produced with future expected delivery time to allow manual Flink failure and recovery testing.",
   "topic": "Orders",
   "topicType": "compacted",
   "keyField": "orderId",
   "defaultOrderCount": 100,
+  "executionMode": "pauseable",
   "events": [
     {
       "step": 1,
@@ -15,7 +16,7 @@
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "CREATED",
-        "expectedDeliveryTime": "now+60s",
+        "expectedDeliveryTime": "now+180s",
         "createdAt": "now",
         "lastUpdatedAt": "now",
         "eventTime": "now",
@@ -30,12 +31,6 @@
     },
     {
       "step": 2,
-      "delayAfterPreviousEventMs": 500,
-      "messageKey": "{{orderId}}",
-      "duplicateOfStep": 1
-    },
-    {
-      "step": 3,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
       "value": {
@@ -43,7 +38,7 @@
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "ACCEPTED",
-        "expectedDeliveryTime": "now+60s",
+        "expectedDeliveryTime": "now+180s",
         "createdAt": "now",
         "lastUpdatedAt": "now+10s",
         "eventTime": "now+10s",
@@ -59,17 +54,21 @@
         ],
         "schemaVersion": 1
       }
-    },
-    {
-      "step": 4,
-      "delayAfterPreviousEventMs": 500,
-      "messageKey": "{{orderId}}",
-      "duplicateOfStep": 3
     }
+  ],
+  "failureTestInstructions": [
+    "Start Kafka and Flink.",
+    "Start the Flink job.",
+    "Run this simulator scenario.",
+    "Wait until order states are consumed and timers are registered.",
+    "Kill or restart the Flink job before expectedDeliveryTime.",
+    "Restart the Flink job from checkpoint or savepoint.",
+    "Wait until expectedDeliveryTime passes.",
+    "Verify exactly one SEND_DELAY_SMS command is emitted per delayed order."
   ],
   "expectedResult": {
     "smsCommandExpected": true,
     "expectedSmsCommandCountPerOrder": 1,
-    "description": "At most one SEND_DELAY_SMS command should be emitted per order."
+    "description": "After Flink recovery, timers and state should be restored and only one SMS command should be emitted per order."
   }
 }

@@ -1,0 +1,92 @@
+{
+  "scenarioName": "out-of-order-updates",
+  "description": "Order snapshots are published in an unexpected order. The pipeline should not crash and must follow documented rules.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 100,
+  "events": [
+    {
+      "step": 1,
+      "delayAfterPreviousEventMs": 0,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "ACCEPTED",
+        "expectedDeliveryTime": "now+120s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+10s",
+        "eventTime": "now+10s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "ACCEPTED",
+            "at": "now+10s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 2,
+      "delayAfterPreviousEventMs": 1000,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "CREATED",
+        "expectedDeliveryTime": "now+120s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now",
+        "eventTime": "now",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 3,
+      "delayAfterPreviousEventMs": 1000,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "DELIVERED",
+        "expectedDeliveryTime": "now+120s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+60s",
+        "eventTime": "now+60s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "ACCEPTED",
+            "at": "now+10s"
+          },
+          {
+            "status": "DELIVERED",
+            "at": "now+60s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    }
+  ],
+  "expectedResult": {
+    "smsCommandExpected": false,
+    "description": "The pipeline should not crash. Since the latest meaningful terminal state is DELIVERED before expectedDeliveryTime, no SMS should be emitted."
+  }
+}

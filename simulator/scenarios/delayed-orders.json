@@ -1,6 +1,6 @@
 {
-  "scenarioName": "duplicate-events",
-  "description": "The same latest order state is published more than once. Duplicate events must not produce duplicate SMS commands.",
+  "scenarioName": "delayed-orders",
+  "description": "Orders are created and accepted but not delivered or cancelled before expected delivery time.",
   "topic": "Orders",
   "topicType": "compacted",
   "keyField": "orderId",
@@ -30,12 +30,6 @@
     },
     {
       "step": 2,
-      "delayAfterPreviousEventMs": 500,
-      "messageKey": "{{orderId}}",
-      "duplicateOfStep": 1
-    },
-    {
-      "step": 3,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
       "value": {
@@ -59,17 +53,11 @@
         ],
         "schemaVersion": 1
       }
-    },
-    {
-      "step": 4,
-      "delayAfterPreviousEventMs": 500,
-      "messageKey": "{{orderId}}",
-      "duplicateOfStep": 3
     }
   ],
   "expectedResult": {
     "smsCommandExpected": true,
     "expectedSmsCommandCountPerOrder": 1,
-    "description": "At most one SEND_DELAY_SMS command should be emitted per order."
+    "description": "One SEND_DELAY_SMS command should be emitted per delayed order after expectedDeliveryTime passes."
   }
 }

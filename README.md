@@ -171,7 +171,7 @@ Expected local flow:
 ```
 Simulator -> Kafka -> Flink -> Kafka
 ```
-Repository Structure
+## Repository Structure
 ```
 delayed-order-sms-flink/
   README.md
@@ -534,3 +534,332 @@ Internal use only.
 
 ## Maintainers
 TBD
+
+
+# new updates:
+## Final Project Structure
+
+```text
+delayed-order-sms-flink/
+├── README.md
+├── docker-compose.yml
+├── Makefile
+├── .gitignore
+├── .env.example
+│
+├── docker/
+│   └── README.md
+│
+├── docs/
+│   ├── adr/
+│   │   ├── 0001-processing-time-vs-event-time.md
+│   │   └── 0002-sms-idempotency-strategy.md
+│   │
+│   ├── rfc/
+│   │   └── delayed-order-detection-rfc.md
+│   │
+│   └── runbooks/
+│       ├── local-runbook.md
+│       ├── failure-test-runbook.md
+│       ├── savepoint-runbook.md
+│       └── final-demo-script.md
+│
+├── schemas/
+│   ├── order-events/
+│   │   └── order-state.schema.json
+│   │
+│   └── sms-commands/
+│       └── send-delay-sms-command.schema.json
+│
+├── simulator/
+│   ├── README.md
+│   ├── requirements.txt
+│   │
+│   ├── scenarios/
+│   │   ├── README.md
+│   │   ├── on-time-orders.json
+│   │   ├── delayed-orders.json
+│   │   ├── cancelled-orders.json
+│   │   ├── eta-updated-orders.json
+│   │   ├── duplicate-events.json
+│   │   ├── out-of-order-updates.json
+│   │   ├── failure-recovery.json
+│   │   └── mixed-orders.json
+│   │
+│   └── src/
+│       └── order_simulator/
+│           ├── __init__.py
+│           ├── main.py
+│           ├── config.py
+│           ├── scenario_loader.py
+│           ├── template_renderer.py
+│           ├── time_utils.py
+│           ├── kafka_producer.py
+│           └── runner.py
+│
+├── flink-job/
+│   ├── README.md
+│   ├── pom.xml
+│   │
+│   └── src/
+│       ├── main/
+│       │   ├── java/
+│       │   │   └── com/
+│       │   │       └── company/
+│       │   │           └── delayedordersms/
+│       │   │               ├── DelayedOrderSmsJob.java
+│       │   │               ├── model/
+│       │   │               │   ├── OrderState.java
+│       │   │               │   ├── OrderStatus.java
+│       │   │               │   ├── OrderDelayState.java
+│       │   │               │   └── SmsCommand.java
+│       │   │               ├── processor/
+│       │   │               │   └── DelayedOrderProcessFunction.java
+│       │   │               ├── serde/
+│       │   │               │   ├── OrderStateDeserializer.java
+│       │   │               │   └── SmsCommandSerializer.java
+│       │   │               └── config/
+│       │   │                   └── JobConfig.java
+│       │   │
+│       │   └── resources/
+│       │       └── log4j2.properties
+│       │
+│       └── test/
+│           └── java/
+│               └── com/
+│                   └── company/
+│                       └── delayedordersms/
+│                           └── DelayedOrderProcessFunctionTest.java
+│
+├── e2e-tests/
+│   ├── README.md
+│   └── scenarios/
+│       ├── delayed-order-test.md
+│       ├── on-time-order-test.md
+│       ├── cancelled-order-test.md
+│       ├── duplicate-events-test.md
+│       ├── eta-updated-order-test.md
+│       └── failure-recovery-test.md
+│
+└── proposal/
+    └── production-proposal.md
+```
+
+---
+
+## Docker-Related Files
+
+Recommended Docker-related files:
+
+```text
+delayed-order-sms-flink/
+├── docker-compose.yml
+├── docker/
+│   └── README.md
+└── .env.example
+```
+
+### `docker-compose.yml`
+
+Contains local services:
+
+```text
+Kafka
+Kafka UI
+Flink JobManager
+Flink TaskManager
+Kafka topic initialization
+```
+
+### `docker/README.md`
+
+Short documentation for running the local infrastructure.
+
+### `.env.example`
+
+Optional file for local configuration examples:
+
+```env
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+ORDERS_TOPIC=Orders
+SMS_COMMANDS_TOPIC=sms-commands
+DLQ_TOPIC=dead-letter-events
+
+ORDERS_COUNT=100
+SCENARIO=mixed-orders
+DRY_RUN=false
+```
+
+---
+
+## Short Project README Section: Simulator
+
+You can add this section to the root `README.md`.
+
+```md
+## Order Event Simulator
+
+The simulator generates realistic order state updates and publishes them to Kafka for local testing.
+
+It writes to the compacted Kafka topic:
+
+```text
+Orders
+```
+
+Each message is keyed by:
+
+```text
+orderId
+```
+
+Each message value contains the full latest order state.
+
+The simulator supports scenarios such as:
+
+- on-time orders
+- delayed orders
+- cancelled orders
+- ETA updated orders
+- duplicate events
+- out-of-order updates
+- failure recovery
+- mixed workloads
+
+Run a dry-run without Kafka:
+
+```bash
+cd simulator
+
+PYTHONPATH=src python -m order_simulator.main \
+  --scenario delayed-orders \
+  --orders-count 2 \
+  --dry-run
+```
+
+Run against local Kafka:
+
+```bash
+cd simulator
+
+PYTHONPATH=src python -m order_simulator.main \
+  --scenario mixed-orders \
+  --orders-count 100 \
+  --kafka-bootstrap-servers localhost:9092 \
+  --orders-topic Orders
+```
+
+Or from the project root:
+
+```bash
+make simulate-mixed
+```
+
+Simulator documentation is available at:
+
+```text
+simulator/README.md
+```
+
+
+# Local Docker Environment
+
+This Docker Compose setup provides the local infrastructure required for the delayed order SMS Flink POC.
+
+## Services
+
+| Service | Description | URL / Port |
+|---|---|---|
+| Kafka | Local Kafka broker in KRaft mode | `localhost:9092` |
+| Kafka UI | Kafka topic/browser UI | http://localhost:8080 |
+| Flink JobManager | Flink cluster manager and UI | http://localhost:8081 |
+| Flink TaskManager | Flink worker | - |
+| Kafka Init | Creates required Kafka topics | - |
+
+## Kafka Topics
+
+The following topics are created automatically:
+
+| Topic | Type | Description |
+|---|---|---|
+| `Orders` | Compacted | Latest order state snapshots keyed by `orderId` |
+| `sms-commands` | Regular | Delay SMS commands emitted by Flink |
+| `dead-letter-events` | Regular | Invalid or unsupported events |
+
+## Start
+
+```bash
+docker compose up -d
+```
+
+## Check Status
+
+```bash
+docker compose ps
+```
+
+## Stop
+
+```bash
+docker compose down
+```
+
+## Stop and Remove Data
+
+```bash
+docker compose down -v
+```
+
+> This removes Kafka data, Flink checkpoints, and savepoints.
+
+## Connection Notes
+
+From host machine:
+
+```text
+localhost:9092
+```
+
+From inside Docker network:
+
+```text
+kafka:29092
+```
+
+## Verify Topics
+
+```bash
+docker exec -it kafka kafka-topics \
+  --bootstrap-server kafka:29092 \
+  --list
+```
+
+Expected topics:
+
+```text
+Orders
+sms-commands
+dead-letter-events
+```
+
+## Consume Orders Topic
+
+```bash
+docker exec -it kafka kafka-console-consumer \
+  --bootstrap-server kafka:29092 \
+  --topic Orders \
+  --from-beginning \
+  --property print.key=true \
+  --property key.separator=" | "
+```
+
+## Consume SMS Commands Topic
+
+```bash
+docker exec -it kafka kafka-console-consumer \
+  --bootstrap-server kafka:29092 \
+  --topic sms-commands \
+  --from-beginning \
+  --property print.key=true \
+  --property key.separator=" | "
+```

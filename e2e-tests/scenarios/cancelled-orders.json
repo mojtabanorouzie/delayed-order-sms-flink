@@ -1,0 +1,58 @@
+{
+  "scenarioName": "cancelled-orders",
+  "description": "[E2E] Orders cancelled before expected delivery. No SMS.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 100,
+  "events": [
+    {
+      "step": 1,
+      "delayAfterPreviousEventMs": 0,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "status": "CREATED",
+        "expectedDeliveryTime": "now+5s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now",
+        "eventTime": "now",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 2,
+      "delayAfterPreviousEventMs": 500,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "status": "CANCELLED",
+        "expectedDeliveryTime": "now+5s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+5s",
+        "eventTime": "now+5s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "CANCELLED",
+            "at": "now+5s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    }
+  ],
+  "expectedResult": {
+    "smsCommandExpected": false,
+    "description": "No SMS for cancelled orders."
+  }
+}

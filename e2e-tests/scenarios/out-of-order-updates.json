@@ -1,0 +1,92 @@
+{
+  "scenarioName": "out-of-order-updates",
+  "description": "[E2E] Order snapshots are published in an unexpected order. Short timers for fast testing.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 100,
+  "events": [
+    {
+      "step": 1,
+      "delayAfterPreviousEventMs": 0,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "ACCEPTED",
+        "expectedDeliveryTime": "now+10s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+5s",
+        "eventTime": "now+5s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "ACCEPTED",
+            "at": "now+5s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 2,
+      "delayAfterPreviousEventMs": 500,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "CREATED",
+        "expectedDeliveryTime": "now+10s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now",
+        "eventTime": "now",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 3,
+      "delayAfterPreviousEventMs": 500,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "DELIVERED",
+        "expectedDeliveryTime": "now+10s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+15s",
+        "eventTime": "now+15s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "ACCEPTED",
+            "at": "now+5s"
+          },
+          {
+            "status": "DELIVERED",
+            "at": "now+15s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    }
+  ],
+  "expectedResult": {
+    "smsCommandExpected": false,
+    "description": "The pipeline should not crash. Since the latest meaningful terminal state is DELIVERED before expectedDeliveryTime, no SMS should be emitted."
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "scenarioName": "delayed-orders",
+  "description": "[E2E] Orders are created and accepted but not delivered before expected delivery time. Short timers for fast testing.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 100,
+  "events": [
+    {
+      "step": 1,
+      "delayAfterPreviousEventMs": 0,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "CREATED",
+        "expectedDeliveryTime": "now+5s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now",
+        "eventTime": "now",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 2,
+      "delayAfterPreviousEventMs": 500,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "ACCEPTED",
+        "expectedDeliveryTime": "now+5s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+5s",
+        "eventTime": "now+5s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "ACCEPTED",
+            "at": "now+5s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    }
+  ],
+  "expectedResult": {
+    "smsCommandExpected": true,
+    "expectedSmsCommandCountPerOrder": 1,
+    "description": "One SEND_DELAY_SMS command should be emitted per delayed order after expectedDeliveryTime passes."
+  }
+}

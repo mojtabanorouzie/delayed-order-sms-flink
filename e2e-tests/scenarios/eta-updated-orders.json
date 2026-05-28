@@ -1,0 +1,83 @@
+{
+  "scenarioName": "eta-updated-orders",
+  "description": "[E2E] ETA updated so timer must be recalculated.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 100,
+  "events": [
+    {
+      "step": 1,
+      "delayAfterPreviousEventMs": 0,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "status": "CREATED",
+        "expectedDeliveryTime": "now+5s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now",
+        "eventTime": "now",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 2,
+      "delayAfterPreviousEventMs": 500,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "status": "ACCEPTED",
+        "expectedDeliveryTime": "now+5s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+5s",
+        "eventTime": "now+5s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "ACCEPTED",
+            "at": "now+5s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 3,
+      "delayAfterPreviousEventMs": 1000,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "status": "ACCEPTED",
+        "expectedDeliveryTime": "now+10s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+10s",
+        "eventTime": "now+10s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "ACCEPTED",
+            "at": "now+5s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    }
+  ],
+  "expectedResult": {
+    "smsCommandExpected": true,
+    "expectedSmsCommandCountPerOrder": 1,
+    "description": "Timer updated when ETA pushed forward."
+  }
+}

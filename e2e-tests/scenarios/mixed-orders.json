@@ -1,0 +1,29 @@
+{
+  "scenarioName": "mixed-orders",
+  "description": "[E2E] Configurable mix of all order scenarios with short timers.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 100,
+  "distribution": {
+    "onTimePercentage": 35,
+    "delayedPercentage": 25,
+    "cancelledPercentage": 15,
+    "etaUpdatedPercentage": 10,
+    "duplicatePercentage": 10,
+    "outOfOrderPercentage": 5
+  },
+  "includedScenarios": [
+    "on-time-orders",
+    "delayed-orders",
+    "cancelled-orders",
+    "eta-updated-orders",
+    "duplicate-events",
+    "out-of-order-updates"
+  ],
+  "expectedResult": {
+    "description": "SMS commands only for actually delayed orders.",
+    "smsCommandExpected": true,
+    "validationRule": "SMS count must match delayed orders count."
+  }
+}

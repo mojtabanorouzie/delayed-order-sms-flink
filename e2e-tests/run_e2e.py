@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -38,11 +39,11 @@ EXPECTED_SMS = {
 
 SCENARIO_WAIT_SECONDS = {
     "delayed-orders": 15,
-    "on-time-orders": 25,
-    "cancelled-orders": 25,
+    "on-time-orders": 15,
+    "cancelled-orders": 15,
     "duplicate-events": 15,
-    "eta-updated-orders": 20,
-    "mixed-orders": 20,
+    "eta-updated-orders": 25,
+    "mixed-orders": 25,
 }
 
 
@@ -112,17 +113,33 @@ def poll_healthy(timeout: int = 120) -> bool:
 
 
 def build_flink_jar() -> bool:
-    """Build the Flink fat JAR."""
+    """Build the Flink fat JAR (requires JAVA_HOME pointing to JDK 17+)."""
     print("[BUILD] Compiling Flink job...")
+    mvn_path = shutil.which("mvn")
+    if not mvn_path:
+        print("[ERROR] mvn not found on PATH")
+        return False
+    env = os.environ.copy()
+    java_home_candidates = [
+        os.environ.get("JAVA_HOME", ""),
+        r"C:\Program Files\Java\jdk-17.0.2",
+        r"C:\Program Files\Java\latest",
+    ]
+    for candidate in java_home_candidates:
+        if candidate and os.path.isdir(candidate):
+            env["JAVA_HOME"] = candidate
+            env["PATH"] = os.path.join(candidate, "bin") + os.pathsep + env.get("PATH", "")
+            break
     result = subprocess.run(
         [
-            "mvn", "clean", "package", "-f",
+            mvn_path, "clean", "package", "-f",
             os.path.join(PROJECT_ROOT, "flink-job", "pom.xml"),
             "-DskipTests", "-q",
         ],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         print(f"[ERROR] Build failed:\n{result.stdout}\n{result.stderr}")
@@ -284,13 +301,14 @@ def consume_sms_count(timeout_ms: int = 30000, max_messages: int = 100) -> int:
 
 
 def run_scenario(name: str, orders_count: int = 5) -> subprocess.CompletedProcess:
-    """Run a single scenario."""
+    """Run a single scenario inside the Docker simulator service."""
     return subprocess.run(
         [
-            sys.executable, "run_scenario.py",
+            "docker", "compose", "--profile", "e2e", "run", "--rm",
+            "simulator",
             "--scenario", name,
             "--orders-count", str(orders_count),
-            "--kafka-bootstrap-servers", "localhost:9092",
+            "--kafka-bootstrap-servers", "kafka:29092",
             "--orders-topic", "Orders",
         ],
         cwd=PROJECT_ROOT,
@@ -356,6 +374,36 @@ def main() -> int:
     if not poll_healthy():
         return 1
 
+    # Ensure Kafka topics exist (kafka-init may not have finished)
+    print("[KAFKA] Creating topics...")
+    topics_cmd = (
+        "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
+        "--topic Orders --partitions 3 --replication-factor 1 "
+        "--config cleanup.policy=compact --config min.cleanable.dirty.ratio=0.01 --config segment.ms=60000 && "
+        "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
+        "--topic sms-commands --partitions 3 --replication-factor 1 && "
+        "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
+        "--topic dead-letter-events --partitions 3 --replication-factor 1"
+    )
+    subprocess.run(
+        ["docker", "exec", "kafka", "bash", "-c", topics_cmd],
+        cwd=PROJECT_ROOT, capture_output=True,
+    )
+    print("  Topics ready")
+
+    # Fix Flink checkpoint volume permissions (Docker volume mounts as root on Windows)
+    print("[PERM] Fixing checkpoint volume permissions...")
+    for container in ("flink-jobmanager", "flink-taskmanager"):
+        chown_result = subprocess.run(
+            ["docker", "exec", "-u", "root", container,
+             "chown", "-R", "flink:flink", "/opt/flink/checkpoints", "/opt/flink/savepoints"],
+            cwd=PROJECT_ROOT, capture_output=True, text=True,
+        )
+        if chown_result.returncode != 0:
+            print(f"  chown {container} (non-fatal): {chown_result.stderr.strip()}")
+        else:
+            print(f"  {container} OK")
+
     # ---- Phase 2: Build & submit Flink job ----
     print("\n" + "=" * 60)
     print("Phase 2: Build & submit Flink job")
@@ -364,7 +412,7 @@ def main() -> int:
     if not build_flink_jar():
         return 1
 
-    # Copy JAR into the jobmanager container's usrlib so flink can access it
+    # Copy JAR into container at a non-bind-mount path to avoid permission issues
     jar_src = FLINK_JAR_PATH
     if not os.path.isfile(jar_src):
         candidates = [
@@ -373,25 +421,27 @@ def main() -> int:
             if f.endswith(".jar") and "original" not in f
         ]
         if not candidates:
-            print("[ERROR] No JAR found")
+            print("[ERROR] No JAR found in flink-job/target/")
             return 1
         jar_src = candidates[0]
 
-    print(f"[DOCKER] Copying JAR to jobmanager container...")
+    print("[DOCKER] Copying JAR to jobmanager container...")
     subprocess.run(
-        ["docker", "cp", jar_src,
-         f"flink-jobmanager:/opt/flink/usrlib/{FLINK_JAR_NAME}"],
+        [
+            "docker", "cp", jar_src,
+            f"flink-jobmanager:/tmp/{FLINK_JAR_NAME}",
+        ],
         cwd=PROJECT_ROOT, check=True,
     )
 
-    # Submit via `flink run` inside the container (more reliable than REST API on Windows)
+    # Submit via `flink run` inside the container
     print("[FLINK] Submitting job...")
     submit_result = subprocess.run(
         [
             "docker", "exec", "flink-jobmanager",
             "flink", "run", "-d",
             "-c", "com.company.delayedordersms.DelayedOrderSmsJob",
-            f"/opt/flink/usrlib/{FLINK_JAR_NAME}",
+            f"/tmp/{FLINK_JAR_NAME}",
             "--kafka.bootstrap.servers", "kafka:29092",
             "--orders.topic", "Orders",
             "--sms.commands.topic", "sms-commands",
@@ -402,25 +452,33 @@ def main() -> int:
         cwd=PROJECT_ROOT, capture_output=True, text=True,
     )
 
-    # Extract job-id from output
+    stderr = (submit_result.stderr or "").strip()
+    stdout = (submit_result.stdout or "").strip()
+
+    # Extract job-id hex (32 chars) from combined output
     job_id = None
-    for line in submit_result.stdout.splitlines():
+    for line in (stdout.splitlines() + stderr.splitlines()):
         line = line.strip()
-        if line and len(line) == 32 and all(c in "0123456789abcdef" for c in line):
-            job_id = line
+        # WARNING lines sometimes contain hex-like tokens; prefer lines that are pure hex
+        if line and len(line) >= 32:
+            tokens = line.split()
+            for token in tokens:
+                token = token.rstrip(".")  # some output adds a trailing dot
+                if len(token) == 32 and all(c in "0123456789abcdef" for c in token):
+                    job_id = token
+                    break
+        if job_id:
             break
 
     if job_id:
-        print(f"  Job ID: {job_id}")
+        print(f"  Job submitted: {job_id}")
     else:
-        # Try to list jobs
-        list_result = subprocess.run(
-            ["docker", "exec", "flink-jobmanager", "flink", "list"],
-            cwd=PROJECT_ROOT, capture_output=True, text=True,
-        )
-        print(f"  Submit output: {submit_result.stdout[:200]}")
-        print(f"  Submit stderr: {submit_result.stderr[:200]}")
-        print(f"  Job list: {list_result.stdout[:200]}")
+        print(f"  ERROR: Could not parse job ID from submit output:")
+        for line in stdout.splitlines()[:10]:
+            print(f"    stdout> {line}")
+        for line in stderr.splitlines()[:10]:
+            print(f"    stderr> {line}")
+        print("  Continuing anyway...")
 
     time.sleep(5)  # Give Flink a moment to start
 
@@ -428,6 +486,8 @@ def main() -> int:
     print("\n" + "=" * 60)
     print("Phase 3: Running scenarios")
     print("=" * 60)
+
+    previous_total = 0
 
     for scenario in scenarios:
         print(f"\n--- Scenario: {scenario} ---")
@@ -448,7 +508,9 @@ def main() -> int:
         time.sleep(wait_sec)
 
         print("  Consuming SMS from sms-commands topic...")
-        sms_count = consume_sms_count(timeout_ms=30000)
+        raw_count = consume_sms_count(timeout_ms=30000)
+        sms_count = raw_count - previous_total
+        previous_total = raw_count
 
         passed = validate_sms_count(scenario, sms_count)
         status = "PASS" if passed else "FAIL"

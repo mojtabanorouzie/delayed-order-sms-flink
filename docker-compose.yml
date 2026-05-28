@@ -163,6 +163,20 @@ services:
     networks:
       - flink-lab
 
+  simulator:
+    build: ./simulator
+    image: order-simulator:local
+    container_name: order-simulator
+    depends_on:
+      kafka:
+        condition: service_healthy
+    profiles:
+      - e2e
+    volumes:
+      - ./e2e-tests/scenarios:/app/scenarios
+    networks:
+      - flink-lab
+
 networks:
   flink-lab:
     driver: bridge

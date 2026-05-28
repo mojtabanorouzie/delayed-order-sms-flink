@@ -1,0 +1,29 @@
+{
+  "scenarioName": "mixed-orders",
+  "description": "[E2E] Generates a configurable mix of all supported order scenarios with short timers.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 100,
+  "distribution": {
+    "onTimePercentage": 35,
+    "delayedPercentage": 25,
+    "cancelledPercentage": 15,
+    "etaUpdatedPercentage": 10,
+    "duplicatePercentage": 10,
+    "outOfOrderPercentage": 5
+  },
+  "includedScenarios": [
+    "on-time-orders",
+    "delayed-orders",
+    "cancelled-orders",
+    "eta-updated-orders",
+    "duplicate-events",
+    "out-of-order-updates"
+  ],
+  "expectedResult": {
+    "description": "The Flink job should correctly process a mixed workload. SMS commands should only be emitted for orders that are actually delayed.",
+    "smsCommandExpected": true,
+    "validationRule": "Number of SMS commands should match the number of delayed orders, excluding delivered or cancelled orders."
+  }
+}

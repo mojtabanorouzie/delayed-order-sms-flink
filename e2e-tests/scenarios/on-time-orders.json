@@ -1,0 +1,126 @@
+{
+  "scenarioName": "on-time-orders",
+  "description": "[E2E] Orders delivered before expected time. No SMS.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 100,
+  "events": [
+    {
+      "step": 1,
+      "delayAfterPreviousEventMs": 0,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "CREATED",
+        "expectedDeliveryTime": "now+10s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now",
+        "eventTime": "now",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 2,
+      "delayAfterPreviousEventMs": 500,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "ACCEPTED",
+        "expectedDeliveryTime": "now+10s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+5s",
+        "eventTime": "now+5s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "ACCEPTED",
+            "at": "now+5s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 3,
+      "delayAfterPreviousEventMs": 500,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "PICKED_UP",
+        "expectedDeliveryTime": "now+10s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+10s",
+        "eventTime": "now+10s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "ACCEPTED",
+            "at": "now+5s"
+          },
+          {
+            "status": "PICKED_UP",
+            "at": "now+10s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 4,
+      "delayAfterPreviousEventMs": 500,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "status": "DELIVERED",
+        "expectedDeliveryTime": "now+10s",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+15s",
+        "eventTime": "now+15s",
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          },
+          {
+            "status": "ACCEPTED",
+            "at": "now+5s"
+          },
+          {
+            "status": "PICKED_UP",
+            "at": "now+10s"
+          },
+          {
+            "status": "DELIVERED",
+            "at": "now+15s"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    }
+  ],
+  "expectedResult": {
+    "smsCommandExpected": false,
+    "description": "No SMS."
+  }
+}

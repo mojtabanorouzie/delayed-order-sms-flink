@@ -604,7 +604,7 @@ It currently:
 
 - consumes from `Orders`
 - parses full order state snapshots
-- ignores invalid JSON
+- routes invalid JSON and malformed orders to `dead-letter-events` via side outputs
 - ignores stale updates using `lastUpdatedAt`
 - uses `keyBy(orderId)`
 - uses `ValueState<OrderDelayState>`
@@ -616,35 +616,22 @@ It currently:
 
 ---
 
-## Limitations
+## Current Capabilities
 
-Current limitations:
-
-- Invalid events are logged but not yet sent to `dead-letter-events`.
-- Unit tests are minimal initially.
-- No custom metrics are implemented yet.
-- State TTL is not configured yet.
-- Replay and dry-run behavior are not implemented in the Flink job.
-- Production deployment strategy is not included in this module.
+- **DLQ**: Invalid JSON and malformed order states are routed to `dead-letter-events` topic via side outputs.
+- **State TTL**: Configurable via `--state-ttl-days` (default 7 days), preventing unbounded state growth.
+- **Custom Metrics**: Five counters exposed to Flink UI: `delayed_orders_detected`, `sms_commands_emitted`, `stale_updates_ignored`, `invalid_messages`, `parse_errors`.
+- **Unit Tests**: 17 tests across 3 test classes covering the process function (10 cases), deserialization, and CLI config parsing.
+- **E2E Tests**: Automated via `e2e-tests/run_e2e.py` covering all 6 scenarios.
+- **Production Proposal**: See `proposal/production-proposal.md` for deployment strategy.
 
 ---
 
-## Next Improvements
+## Known Limitations
 
-Planned improvements:
-
-1. Add DLQ output for invalid events.
-2. Add unit tests using Flink test harness.
-3. Add state TTL.
-4. Add custom metrics:
-   - delayed orders detected
-   - SMS commands emitted
-   - stale updates ignored
-   - invalid messages
-   - active timers
-5. Add savepoint compatibility documentation.
-6. Add end-to-end test automation.
-7. Add replay-safe mode for historical reprocessing.
+- Replay and dry-run behavior are not implemented in the Flink job.
+- Savepoint compatibility is not yet documented.
+- Historical event-time reprocessing is not supported (by design — this POC uses processing time).
 
 ---
 

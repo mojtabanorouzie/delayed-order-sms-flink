@@ -46,6 +46,13 @@
             <version>${flink.kafka.connector.version}</version>
         </dependency>
 
+        <!-- RocksDB State Backend -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-statebackend-rocksdb</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+
         <!-- Jackson JSON - bundled in fat JAR to avoid version conflict with Flink's older Jackson -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

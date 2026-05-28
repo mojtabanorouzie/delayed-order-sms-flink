@@ -12,7 +12,7 @@ import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
-import org.apache.flink.runtime.state.hashmap.HashMapStateBackend;
+import org.apache.flink.contrib.streaming.state.EmbeddedRocksDBStateBackend;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -27,7 +27,7 @@ public class DelayedOrderSmsJob {
         env.setParallelism(config.parallelism());
 
         env.enableCheckpointing(config.checkpointIntervalMs(), CheckpointingMode.EXACTLY_ONCE);
-        env.setStateBackend(new HashMapStateBackend());
+        env.setStateBackend(new EmbeddedRocksDBStateBackend(true));
         env.getCheckpointConfig().setCheckpointStorage(config.checkpointStoragePath());
         env.getCheckpointConfig().setMinPauseBetweenCheckpoints(5_000);
         env.getCheckpointConfig().setCheckpointTimeout(60_000);

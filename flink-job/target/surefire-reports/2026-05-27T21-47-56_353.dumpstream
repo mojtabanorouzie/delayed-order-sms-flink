@@ -1,0 +1,5 @@
+# Created at 2026-05-27T21:47:58.204
+Boot Manifest-JAR contains absolute paths in classpath 'G:\Projects\PersonalWebsite\delayed-order-sms-flink\flink-job\target\test-classes'
+Hint: <argLine>-Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
+'other' has different root
+

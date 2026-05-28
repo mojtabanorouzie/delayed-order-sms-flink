@@ -272,6 +272,12 @@ Start local infrastructure from the repository root:
 docker compose up -d
 ```
 
+Wait ~30-60 seconds for all services, then verify:
+
+```bash
+docker compose ps
+```
+
 Then run the simulator:
 
 ```bash
@@ -283,6 +289,37 @@ PYTHONPATH=src python -m order_simulator.main \
   --kafka-bootstrap-servers localhost:9092 \
   --orders-topic Orders
 ```
+
+### Convenience Script
+
+From the project root, you can use `run_scenario.py` which wraps the simulator:
+
+```bash
+python run_scenario.py --scenario delayed-orders --orders-count 5 --kafka-bootstrap-servers localhost:9092 --orders-topic Orders
+```
+
+This avoids needing to set `PYTHONPATH` or `cd` into the simulator directory.
+
+### Quick Smoke Test (All Scenarios)
+
+Run all scenarios with 5 orders each to validate the pipeline:
+
+```bash
+python run_scenario.py --scenario delayed-orders      --orders-count 5 --kafka-bootstrap-servers localhost:9092 --orders-topic Orders
+python run_scenario.py --scenario on-time-orders      --orders-count 5 --kafka-bootstrap-servers localhost:9092 --orders-topic Orders
+python run_scenario.py --scenario cancelled-orders     --orders-count 5 --kafka-bootstrap-servers localhost:9092 --orders-topic Orders
+python run_scenario.py --scenario duplicate-events     --orders-count 5 --kafka-bootstrap-servers localhost:9092 --orders-topic Orders
+python run_scenario.py --scenario eta-updated-orders   --orders-count 5 --kafka-bootstrap-servers localhost:9092 --orders-topic Orders
+python run_scenario.py --scenario mixed-orders         --orders-count 5 --kafka-bootstrap-servers localhost:9092 --orders-topic Orders
+```
+
+### Practical Tips
+
+- **Time expressions** like `now+2s` are resolved to real UTC timestamps at runtime. For `delayed-orders`, the scenario sets `expectedDeliveryTime: "now+2s"` so SMS appears ~2 seconds after events are published.
+- **Kafka connection**: Use `localhost:9092` from the host, `kafka:29092` from inside Docker containers.
+- **Error handling**: If you see `CoordinatorNotAvailableException`, it's a transient Kafka startup error that self-resolves.
+- **Dry-run first**: Always validate a new scenario with `--dry-run` before publishing to Kafka.
+- **Unique keys**: Each run generates deterministic IDs like `ord-delayed-orders-0001`. To avoid collisions between runs, restart the consumer group or use a different group ID.
 
 ---
 

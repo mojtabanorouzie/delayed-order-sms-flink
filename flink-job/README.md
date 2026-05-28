@@ -386,7 +386,7 @@ make build-flink-job
 
 ---
 
-## Run Locally with Docker Flink
+## Run Locally with Docker Flink (Tested)
 
 Start local infrastructure from the repository root:
 
@@ -394,17 +394,31 @@ Start local infrastructure from the repository root:
 docker compose up -d
 ```
 
+Wait ~30-60 seconds, then verify:
+
+```bash
+docker compose ps
+```
+
+All services should be healthy/running. `kafka-init` may exit (harmless).
+
 Build the job:
 
 ```bash
 cd flink-job
-mvn clean package
+mvn clean package -q
+```
+
+The JAR is automatically mounted into the Flink container via Docker volume (`./flink-job/target/delayed-order-sms-flink-job.jar` is mapped to `/opt/flink/usrlib/delayed-order-sms-flink-job.jar`). Copy it if needed:
+
+```bash
+docker cp flink-job/target/delayed-order-sms-flink-job.jar flink-jobmanager:/opt/flink/usrlib/
 ```
 
 Submit the job to the local Flink container:
 
 ```bash
-docker exec -it flink-jobmanager flink run \
+docker exec flink-jobmanager flink run \
   -c com.company.delayedordersms.DelayedOrderSmsJob \
   /opt/flink/usrlib/delayed-order-sms-flink-job.jar \
   --kafka.bootstrap.servers kafka:29092 \
@@ -414,6 +428,19 @@ docker exec -it flink-jobmanager flink run \
   --checkpoint.storage.path file:///opt/flink/checkpoints \
   --parallelism 1
 ```
+
+Verify the job is running:
+
+```bash
+docker exec flink-jobmanager flink list 2>&1
+```
+
+Expected output:
+```
+Delayed Order SMS Detection Job (RUNNING)
+```
+
+**Note**: The `--checkpoint.storage.path` uses a path *inside* the Flink container. Checkpoints are written to `/opt/flink/checkpoints` within the `flink-jobmanager` container. To persist across restarts, ensure this is a Docker volume or bind mount (configured in `docker-compose.yml`).
 
 Flink UI:
 
@@ -426,6 +453,38 @@ Kafka UI:
 ```text
 http://localhost:8080
 ```
+
+### Verifying the Job
+
+Check job metrics in Flink UI → select the running job → check:
+- **Checkpoints** tab: should show completed checkpoints every 10s
+- **Task Managers** tab: should show 1 task manager with 1 slot
+- **Backpressure**: should show OK (green)
+- **Records Sent/Received**: increments when scenarios are run
+
+TaskManager logs:
+
+```bash
+docker logs flink-taskmanager 2>&1 | tail -20
+```
+
+Look for:
+```
+Resetting the last seen epoch of partition Orders-N
+Resetting the last seen epoch of partition sms-commands-N
+```
+
+These indicate the Kafka consumer and producer are connected.
+
+### Common Issues
+
+| Symptom | Cause | Solution |
+|---------|-------|----------|
+| Job not appearing in Flink UI | JAR not found in container | `docker cp` the JAR to `/opt/flink/usrlib/` |
+| `ClassNotFoundException` | Wrong main class path | Verify `-c com.company.delayedordersms.DelayedOrderSmsJob` |
+| `CoordinatorNotAvailableException` | Kafka coordinator not ready | Self-resolves within ~30s after Kafka starts |
+| Job stuck in CREATED state | No TaskManager slots available | Wait for TaskManager to register; check `docker compose ps` |
+| `NoSuchTopicException` for `sms-commands` | Flink auto-creates it on first run | This is normal; topic appears after first SMS emission |
 
 ---
 

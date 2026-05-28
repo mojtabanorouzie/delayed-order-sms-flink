@@ -12,15 +12,15 @@ class OrderKafkaProducer:
         self._producer = None
 
         if not dry_run:
-            from confluent_kafka import Producer
+            from kafka import KafkaProducer
 
-            self._producer = Producer(
-                {
-                    "bootstrap.servers": bootstrap_servers,
-                    "client.id": "order-event-simulator",
-                    "acks": "all",
-                    "enable.idempotence": True,
-                }
+            self._producer = KafkaProducer(
+                bootstrap_servers=bootstrap_servers,
+                client_id="order-event-simulator",
+                acks="all",
+                enable_idempotence=True,
+                key_serializer=lambda k: k.encode("utf-8") if isinstance(k, str) else k,
+                value_serializer=lambda v: v.encode("utf-8") if isinstance(v, str) else v,
             )
 
     def publish(self, key: str, value: dict[str, Any]) -> None:
@@ -42,13 +42,11 @@ class OrderKafkaProducer:
 
         assert self._producer is not None
 
-        self._producer.produce(
+        self._producer.send(
             topic=self.topic,
             key=key.encode("utf-8"),
             value=payload.encode("utf-8"),
         )
-
-        self._producer.poll(0)
 
     def flush(self) -> None:
         if self.dry_run:

@@ -1,0 +1,26 @@
+# Build artifacts
+*.jar
+flink-job/target/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Temp files
+config_*_temp.yaml
+
+# Docker volumes / data
+kafka-data/
+flink-checkpoints/
+flink-savepoints/
+
+# OS
+.DS_Store
+Thumbs.db

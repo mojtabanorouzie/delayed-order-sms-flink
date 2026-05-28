@@ -1,9 +1,11 @@
 package com.company.delayedordersms;
 
 import com.company.delayedordersms.config.JobConfig;
+import com.company.delayedordersms.model.DeadLetterEvent;
 import com.company.delayedordersms.model.OrderState;
 import com.company.delayedordersms.model.SmsCommand;
 import com.company.delayedordersms.processor.DelayedOrderProcessFunction;
+import com.company.delayedordersms.serde.DeadLetterEventSerializationSchema;
 import com.company.delayedordersms.serde.OrderStateDeserializationFunction;
 import com.company.delayedordersms.serde.SmsCommandSerializationSchema;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
@@ -14,6 +16,7 @@ import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.contrib.streaming.state.EmbeddedRocksDBStateBackend;
 import org.apache.flink.streaming.api.CheckpointingMode;
+import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
@@ -52,16 +55,37 @@ public class DelayedOrderSmsJob {
                 .setRecordSerializer(new SmsCommandSerializationSchema(config.smsCommandsTopic()))
                 .build();
 
+        KafkaSink<DeadLetterEvent> dlqSink = KafkaSink.<DeadLetterEvent>builder()
+                .setBootstrapServers(config.kafkaBootstrapServers())
+                .setRecordSerializer(new DeadLetterEventSerializationSchema("dead-letter-events"))
+                .build();
+
         SingleOutputStreamOperator<OrderState> orders = env
                 .fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source - Orders")
                 .name("Read Orders")
-                .flatMap(new OrderStateDeserializationFunction())
+                .process(new OrderStateDeserializationFunction())
                 .name("Parse Order State");
 
-        orders
+        DataStream<DeadLetterEvent> parseFailures = orders
+                .getSideOutput(OrderStateDeserializationFunction.DEAD_LETTER_TAG);
+
+        parseFailures
+                .sinkTo(dlqSink)
+                .name("Kafka Sink - Dead Letter (Parse Failures)");
+
+        SingleOutputStreamOperator<SmsCommand> commands = orders
                 .keyBy(OrderState::getOrderId)
-                .process(new DelayedOrderProcessFunction())
-                .name("Detect Delayed Orders")
+                .process(new DelayedOrderProcessFunction(config.stateTtlDays()))
+                .name("Detect Delayed Orders");
+
+        DataStream<DeadLetterEvent> invalidOrders = commands
+                .getSideOutput(DelayedOrderProcessFunction.INVALID_ORDER_TAG);
+
+        invalidOrders
+                .sinkTo(dlqSink)
+                .name("Kafka Sink - Dead Letter (Invalid Orders)");
+
+        commands
                 .sinkTo(sink)
                 .name("Kafka Sink - SMS Commands");
 

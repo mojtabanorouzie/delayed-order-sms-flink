@@ -1,106 +1,37 @@
-
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.com/schemas/order-events/order-state.schema.json",
-  "title": "Order State",
-  "description": "Full latest order state published to the compacted Orders Kafka topic. Each message must be keyed by orderId.",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://company.com/schemas/order-state.schema.json",
+  "title": "OrderState",
+  "description": "Order state event published to the compacted Orders Kafka topic, keyed by orderId",
   "type": "object",
-  "required": [
-    "orderId",
-    "customerId",
-    "storeId",
-    "status",
-    "expectedDeliveryTime",
-    "createdAt",
-    "lastUpdatedAt",
-    "eventTime",
-    "stateLogs",
-    "schemaVersion"
-  ],
+  "required": ["orderId", "customerId", "storeId", "status", "expectedDeliveryTime", "createdAt", "lastUpdatedAt", "eventTime", "stateLogs", "schemaVersion"],
   "properties": {
-    "orderId": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Unique order identifier. This value must also be used as the Kafka message key."
-    },
-    "customerId": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Customer identifier."
-    },
-    "storeId": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Store identifier."
-    },
+    "orderId": { "type": "string", "minLength": 1, "description": "Unique order identifier" },
+    "customerId": { "type": "string", "minLength": 1, "description": "Customer identifier" },
+    "storeId": { "type": "string", "minLength": 1, "description": "Store/branch identifier" },
     "status": {
       "type": "string",
-      "description": "Latest current status of the order.",
-      "enum": [
-        "CREATED",
-        "ACCEPTED",
-        "PICKED_UP",
-        "DELIVERED",
-        "CANCELLED"
-      ]
+      "enum": ["CREATED", "ACCEPTED", "PICKED_UP", "DELIVERED", "CANCELLED"],
+      "description": "Current order lifecycle status"
     },
-    "expectedDeliveryTime": {
-      "type": "string",
-      "format": "date-time",
-      "description": "Current expected delivery deadline."
-    },
-    "createdAt": {
-      "type": "string",
-      "format": "date-time",
-      "description": "Order creation timestamp."
-    },
-    "lastUpdatedAt": {
-      "type": "string",
-      "format": "date-time",
-      "description": "Timestamp of the latest order state update."
-    },
-    "eventTime": {
-      "type": "string",
-      "format": "date-time",
-      "description": "Business event time of the latest update."
-    },
+    "expectedDeliveryTime": { "type": "string", "format": "date-time", "description": "When the order is expected to be delivered (UTC ISO-8601)" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "lastUpdatedAt": { "type": "string", "format": "date-time", "description": "Timestamp of last state change, used for stale-update detection" },
+    "eventTime": { "type": "string", "format": "date-time" },
     "stateLogs": {
       "type": "array",
-      "description": "Historical state changes and important order updates.",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": [
-          "status",
-          "at"
-        ],
+        "required": ["status", "at"],
         "properties": {
-          "status": {
-            "type": "string",
-            "description": "Historical status or update action.",
-            "enum": [
-              "CREATED",
-              "ACCEPTED",
-              "PICKED_UP",
-              "DELIVERED",
-              "CANCELLED",
-              "ETA_UPDATED"
-            ]
-          },
-          "at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Timestamp of this historical state change."
-          }
+          "status": { "type": "string", "enum": ["CREATED", "ACCEPTED", "PICKED_UP", "DELIVERED", "CANCELLED"] },
+          "at": { "type": "string", "format": "date-time" }
         },
-        "additionalProperties": true
+        "additionalProperties": false
       }
     },
-    "schemaVersion": {
-      "type": "integer",
-      "const": 1,
-      "description": "Schema version."
-    }
+    "schemaVersion": { "type": "integer", "const": 1 }
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

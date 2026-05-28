@@ -1,6 +1,10 @@
 """Shortcut to run order simulator scenarios."""
 import sys
-sys.path.insert(0, r'g:\Projects\PersonalWebsite\delayed-order-sms-flink\simulator\src')
+import os
+
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_simulator_src = os.path.join(_script_dir, 'simulator', 'src')
+sys.path.insert(0, _simulator_src)
 
 from order_simulator.main import main
 

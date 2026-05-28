@@ -1,62 +1,20 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.com/schemas/sms-commands/send-delay-sms-command.schema.json",
-  "title": "Send Delay SMS Command",
-  "description": "Command emitted by the Flink job when an order is detected as delayed.",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://company.com/schemas/send-delay-sms-command.schema.json",
+  "title": "SendDelaySmsCommand",
+  "description": "Command emitted when an order is delayed past its expected delivery time. Idempotent via commandId.",
   "type": "object",
-  "required": [
-    "commandId",
-    "commandType",
-    "orderId",
-    "customerId",
-    "storeId",
-    "reason",
-    "expectedDeliveryTime",
-    "createdAt",
-    "schemaVersion"
-  ],
+  "required": ["commandId", "commandType", "orderId", "customerId", "storeId", "reason", "expectedDeliveryTime", "createdAt", "schemaVersion"],
   "properties": {
-    "commandId": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Idempotent command identifier. Format: orderId + ':DELAY_SMS'.",
-      "pattern": "^.+:DELAY_SMS$"
-    },
-    "commandType": {
-      "type": "string",
-      "const": "SEND_DELAY_SMS"
-    },
-    "orderId": {
-      "type": "string",
-      "minLength": 1
-    },
-    "customerId": {
-      "type": "string",
-      "minLength": 1
-    },
-    "storeId": {
-      "type": "string",
-      "minLength": 1
-    },
-    "reason": {
-      "type": "string",
-      "enum": [
-        "ORDER_DELAYED"
-      ]
-    },
-    "expectedDeliveryTime": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "createdAt": {
-      "type": "string",
-      "format": "date-time",
-      "description": "Command creation timestamp."
-    },
-    "schemaVersion": {
-      "type": "integer",
-      "const": 1
-    }
+    "commandId": { "type": "string", "pattern": "^.+:DELAY_SMS$", "description": "Idempotent key: {orderId}:DELAY_SMS" },
+    "commandType": { "type": "string", "const": "SEND_DELAY_SMS" },
+    "orderId": { "type": "string", "minLength": 1 },
+    "customerId": { "type": "string", "minLength": 1 },
+    "storeId": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "const": "ORDER_DELAYED" },
+    "expectedDeliveryTime": { "type": "string", "format": "date-time" },
+    "createdAt": { "type": "string", "format": "date-time", "description": "When this command was generated" },
+    "schemaVersion": { "type": "integer", "const": 1 }
   },
   "additionalProperties": false
 }

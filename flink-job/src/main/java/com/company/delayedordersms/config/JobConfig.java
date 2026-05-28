@@ -13,7 +13,8 @@ public record JobConfig(
         long checkpointIntervalMs,
         int parallelism,
         int restartAttempts,
-        long restartDelayMs
+        long restartDelayMs,
+        int stateTtlDays
 ) implements Serializable {
 
     public static JobConfig fromArgs(String[] args) {
@@ -28,7 +29,8 @@ public record JobConfig(
                 Long.parseLong(get(params, "checkpoint.interval.ms", "10000")),
                 Integer.parseInt(get(params, "parallelism", "1")),
                 Integer.parseInt(get(params, "restart.attempts", "3")),
-                Long.parseLong(get(params, "restart.delay.ms", "5000"))
+                Long.parseLong(get(params, "restart.delay.ms", "5000")),
+Integer.parseInt(get(params, "state-ttl-days", "7"))
         );
     }
 

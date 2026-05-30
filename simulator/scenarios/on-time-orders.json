@@ -1,6 +1,6 @@
 {
   "scenarioName": "on-time-orders",
-  "description": "Orders are created and delivered before expected delivery time. No delay SMS should be emitted.",
+  "description": "Orders with future-dated ETAs that are on-time. No delay SMS should be emitted.",
   "topic": "Orders",
   "topicType": "compacted",
   "keyField": "orderId",
@@ -10,12 +10,13 @@
       "step": 1,
       "delayAfterPreviousEventMs": 0,
       "messageKey": "{{orderId}}",
+      "etaOffset": "+60s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "CREATED",
-        "expectedDeliveryTime": "now+120s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now",
         "eventTime": "now",
@@ -32,12 +33,13 @@
       "step": 2,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
+      "etaOffset": "+60s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "ACCEPTED",
-        "expectedDeliveryTime": "now+120s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now+10s",
         "eventTime": "now+10s",
@@ -58,12 +60,13 @@
       "step": 3,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
+      "etaOffset": "+60s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "PICKED_UP",
-        "expectedDeliveryTime": "now+120s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now+30s",
         "eventTime": "now+30s",
@@ -88,12 +91,13 @@
       "step": 4,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
+      "etaOffset": "+60s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "DELIVERED",
-        "expectedDeliveryTime": "now+120s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now+60s",
         "eventTime": "now+60s",
@@ -121,6 +125,6 @@
   ],
   "expectedResult": {
     "smsCommandExpected": false,
-    "description": "No SEND_DELAY_SMS command should be emitted."
+    "description": "No SEND_DELAY_SMS command should be emitted for on-time orders."
   }
 }

@@ -1,6 +1,6 @@
 {
   "scenarioName": "duplicate-events",
-  "description": "The same latest order state is published more than once. Duplicate events must not produce duplicate SMS commands.",
+  "description": "Duplicate delayed events are published. Duplicate events must not produce duplicate SMS commands.",
   "topic": "Orders",
   "topicType": "compacted",
   "keyField": "orderId",
@@ -10,12 +10,13 @@
       "step": 1,
       "delayAfterPreviousEventMs": 0,
       "messageKey": "{{orderId}}",
+      "etaOffset": "-30s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "CREATED",
-        "expectedDeliveryTime": "now+60s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now",
         "eventTime": "now",
@@ -38,12 +39,13 @@
       "step": 3,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
+      "etaOffset": "-30s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "ACCEPTED",
-        "expectedDeliveryTime": "now+60s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now+10s",
         "eventTime": "now+10s",
@@ -70,6 +72,6 @@
   "expectedResult": {
     "smsCommandExpected": true,
     "expectedSmsCommandCountPerOrder": 1,
-    "description": "At most one SEND_DELAY_SMS command should be emitted per order."
+    "description": "At most one SEND_DELAY_SMS command should be emitted per order (idempotence)."
   }
 }

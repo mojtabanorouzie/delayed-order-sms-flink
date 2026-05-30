@@ -173,7 +173,7 @@ services:
     profiles:
       - e2e
     volumes:
-      - ./e2e-tests/scenarios:/app/scenarios
+      - ./simulator/scenarios:/app/scenarios
     networks:
       - flink-lab
 

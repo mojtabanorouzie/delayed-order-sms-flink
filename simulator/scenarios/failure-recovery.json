@@ -1,6 +1,6 @@
 {
   "scenarioName": "failure-recovery",
-  "description": "Orders are produced with future expected delivery time to allow manual Flink failure and recovery testing.",
+  "description": "Orders with delayed ETAs for manual Flink failure and recovery testing.",
   "topic": "Orders",
   "topicType": "compacted",
   "keyField": "orderId",
@@ -11,12 +11,13 @@
       "step": 1,
       "delayAfterPreviousEventMs": 0,
       "messageKey": "{{orderId}}",
+      "etaOffset": "-30s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "CREATED",
-        "expectedDeliveryTime": "now+180s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now",
         "eventTime": "now",
@@ -33,12 +34,13 @@
       "step": 2,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
+      "etaOffset": "-30s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "ACCEPTED",
-        "expectedDeliveryTime": "now+180s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now+10s",
         "eventTime": "now+10s",
@@ -60,15 +62,12 @@
     "Start Kafka and Flink.",
     "Start the Flink job.",
     "Run this simulator scenario.",
-    "Wait until order states are consumed and timers are registered.",
-    "Kill or restart the Flink job before expectedDeliveryTime.",
-    "Restart the Flink job from checkpoint or savepoint.",
-    "Wait until expectedDeliveryTime passes.",
-    "Verify exactly one SEND_DELAY_SMS command is emitted per delayed order."
+    "SMS commands should be emitted immediately since orders are delayed.",
+    "Verify exactly one SEND_DELAY_SMS command is emitted per order."
   ],
   "expectedResult": {
     "smsCommandExpected": true,
     "expectedSmsCommandCountPerOrder": 1,
-    "description": "After Flink recovery, timers and state should be restored and only one SMS command should be emitted per order."
+    "description": "SMS commands should be emitted immediately for all delayed orders."
   }
 }

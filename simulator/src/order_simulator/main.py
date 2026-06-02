@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+from pathlib import Path
 
 from order_simulator.config import SimulatorConfig
 from order_simulator.kafka_producer import OrderKafkaProducer
@@ -51,8 +53,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    scenario_arg = args.scenario
+
+    if scenario_arg is None:
+        # Fallback to deprecated positional argument via SCENARIO_FILE env var.
+        # The e2e runner may pass scenario via the SCENARIO_FILE environment variable.
+        scenario_arg = os.getenv("SCENARIO_FILE")
+
     config = SimulatorConfig.from_env().override(
-        scenario=args.scenario,
+        scenario=scenario_arg,
         orders_count=args.orders_count,
         kafka_bootstrap_servers=args.kafka_bootstrap_servers,
         orders_topic=args.orders_topic,

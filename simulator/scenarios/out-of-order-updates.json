@@ -1,6 +1,6 @@
 {
   "scenarioName": "out-of-order-updates",
-  "description": "Order snapshots are published in an unexpected order. The pipeline should not crash and must follow documented rules.",
+  "description": "Order snapshots are published in an unexpected order (ACCEPTED before CREATED). The pipeline should not crash.",
   "topic": "Orders",
   "topicType": "compacted",
   "keyField": "orderId",
@@ -10,12 +10,13 @@
       "step": 1,
       "delayAfterPreviousEventMs": 0,
       "messageKey": "{{orderId}}",
+      "etaOffset": "+60s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "ACCEPTED",
-        "expectedDeliveryTime": "now+120s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now+10s",
         "eventTime": "now+10s",
@@ -36,12 +37,13 @@
       "step": 2,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
+      "etaOffset": "+60s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "CREATED",
-        "expectedDeliveryTime": "now+120s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now",
         "eventTime": "now",
@@ -58,12 +60,13 @@
       "step": 3,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
+      "etaOffset": "+60s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
         "status": "DELIVERED",
-        "expectedDeliveryTime": "now+120s",
+        "expectedDeliveryTime": "now",
         "createdAt": "now",
         "lastUpdatedAt": "now+60s",
         "eventTime": "now+60s",
@@ -87,6 +90,6 @@
   ],
   "expectedResult": {
     "smsCommandExpected": false,
-    "description": "The pipeline should not crash. Since the latest meaningful terminal state is DELIVERED before expectedDeliveryTime, no SMS should be emitted."
+    "description": "The pipeline should not crash and should handle out-of-order delivery. No SMS should be emitted (all orders on-time)."
   }
 }

@@ -13,7 +13,7 @@ from order_simulator.config import SimulatorConfig
 from order_simulator.kafka_producer import OrderKafkaProducer
 from order_simulator.scenario_loader import ScenarioLoader
 from order_simulator.template_renderer import render_template
-from order_simulator.time_utils import resolve_dynamic_times, utc_now
+from order_simulator.time_utils import resolve_dynamic_times, utc_now, parse_offset, to_iso_z
 
 
 @dataclass(frozen=True)
@@ -147,7 +147,7 @@ class SimulatorRunner:
                         f"Event step={step} must contain value or duplicateOfStep"
                     )
 
-                value = self._build_event_value(value_template, context)
+                value = self._build_event_value(value_template, context, event_definition)
                 published_by_step[step] = copy.deepcopy(value)
 
             message_key = event_definition.get("messageKey", "{{orderId}}")
@@ -159,9 +159,19 @@ class SimulatorRunner:
         self,
         value_template: dict[str, Any],
         context: OrderContext,
+        event_definition: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         rendered = render_template(value_template, context.as_template_context())
         resolved = resolve_dynamic_times(rendered, context.base_time)
+        
+        # Apply etaOffset if present in event definition
+        if event_definition and "etaOffset" in event_definition and "expectedDeliveryTime" in resolved:
+            try:
+                eta_offset = parse_offset(event_definition["etaOffset"])
+                adjusted_time = context.base_time + eta_offset
+                resolved["expectedDeliveryTime"] = to_iso_z(adjusted_time)
+            except (ValueError, TypeError) as e:
+                print(f"Warning: Failed to apply etaOffset: {e}")
 
         return resolved
 
@@ -226,14 +236,33 @@ class SimulatorRunner:
                 for _ in range(self.config.orders_count)
             ]
 
-        scenario_names = [item[0] for item in weighted_scenarios]
-        weights = [item[1] for item in weighted_scenarios]
+        total_weight = sum(weight for _, weight in weighted_scenarios)
+        if total_weight <= 0:
+            return [
+                self.random.choice(included_scenarios)
+                for _ in range(self.config.orders_count)
+            ]
 
-        return self.random.choices(
-            population=scenario_names,
-            weights=weights,
-            k=self.config.orders_count,
-        )
+        fractional_counts: list[tuple[str, int, float]] = []
+        assigned_counts: dict[str, int] = {}
+
+        for scenario_name, weight in weighted_scenarios:
+            exact = self.config.orders_count * weight / total_weight
+            floor_count = int(exact)
+            fractional_counts.append((scenario_name, floor_count, exact - floor_count))
+            assigned_counts[scenario_name] = floor_count
+
+        remaining = self.config.orders_count - sum(count for _, count, _ in fractional_counts)
+        fractional_counts.sort(key=lambda item: item[2], reverse=True)
+
+        for scenario_name, _, _ in fractional_counts[:remaining]:
+            assigned_counts[scenario_name] += 1
+
+        assignments: list[str] = []
+        for scenario_name, _, _ in fractional_counts:
+            assignments.extend([scenario_name] * assigned_counts[scenario_name])
+
+        return assignments
 
     def _pause_for_failure_testing(self, step: int) -> None:
         if self.config.pause_duration_seconds > 0:

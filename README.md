@@ -249,7 +249,7 @@ See [e2e-tests/README.md](e2e-tests/README.md) for details.
 | cancelled-orders | 5 | 0 | Cancelled before deadline — no SMS |
 | duplicate-events | 5 (10 events) | 5 | Exactly-once: duplicates → 1 SMS each |
 | eta-updated-orders | 5 | 5 | Timer tracks the updated `expectedDeliveryTime` |
-| mixed-orders | 5 | ~1–2 | Only delayed orders emit SMS |
+| mixed-orders | 5 | 0–2 | Only delayed orders emit SMS (25% rate over 5 orders) |
 
 ## Common Issues
 

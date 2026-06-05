@@ -34,7 +34,7 @@ EXPECTED_SMS = {
     "cancelled-orders": 0,
     "duplicate-events": 5,  # NOT 10 — idempotent
     "eta-updated-orders": 5,
-    "mixed-orders": (1, 2),  # range
+    "mixed-orders": (0, 2),  # 25% of 5 orders → 0-2 delayed (small-N variance)
 }
 
 SCENARIO_WAIT_SECONDS = {

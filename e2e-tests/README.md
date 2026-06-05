@@ -28,6 +28,7 @@ docker compose ps
 ```
 
 All five services should show `healthy` or `running`:
+
 - `kafka`
 - `kafka-ui`
 - `flink-jobmanager`
@@ -66,7 +67,8 @@ docker exec flink-jobmanager flink list 2>&1
 ```
 
 Expected output:
-```
+
+```text
 Delayed Order SMS Detection Job (RUNNING)
 ```
 
@@ -117,13 +119,13 @@ Open [http://localhost:8080](http://localhost:8080) — browse `Orders`, `sms-co
 ## Expected Results Per Scenario
 
 | Scenario | Orders | Expected SMS | Actual Behavior |
-|----------|--------|-------------|----------------|
+| --- | --- | --- | --- |
 | **delayed-orders** | 5 | 5 SEND_DELAY_SMS | ✅ One per order, emitted after expectedDeliveryTime passes |
 | **on-time-orders** | 5 | 0 | ✅ Order reaches DELIVERED before deadline, no SMS |
 | **cancelled-orders** | 5 | 0 | ✅ Order reaches CANCELLED before deadline, no SMS |
 | **duplicate-events** | 5 | 5 (not 10) | ✅ Duplicate events deduplicated, exactly one SMS per order |
 | **eta-updated-orders** | 5 | 5 | ✅ SMS timed against the *updated* expectedDeliveryTime |
-| **mixed-orders** | 5 | ~1-2 (varies) | ✅ Only delayed-type orders emit SMS |
+| **mixed-orders** | 5 | 0-2 (varies) | ✅ Only delayed-type orders emit SMS (25% rate over 5 orders) |
 
 ---
 
@@ -168,6 +170,7 @@ To verify idempotency, run the **duplicate-events** scenario and check that the 
 For manual failure recovery testing, see `docs/runbooks/failure-test-runbook.md`.
 
 Quick flow:
+
 1. Submit job, run `failure-recovery` scenario
 2. Cancel the Flink job via UI or CLI
 3. Re-submit the job (it will restore from the latest checkpoint)

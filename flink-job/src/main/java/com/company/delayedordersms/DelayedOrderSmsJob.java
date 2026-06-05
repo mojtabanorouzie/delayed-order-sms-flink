@@ -57,7 +57,7 @@ public class DelayedOrderSmsJob {
 
         KafkaSink<DeadLetterEvent> dlqSink = KafkaSink.<DeadLetterEvent>builder()
                 .setBootstrapServers(config.kafkaBootstrapServers())
-                .setRecordSerializer(new DeadLetterEventSerializationSchema("dead-letter-events"))
+                .setRecordSerializer(new DeadLetterEventSerializationSchema(config.deadLetterTopic()))
                 .build();
 
         SingleOutputStreamOperator<OrderState> orders = env

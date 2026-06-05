@@ -8,7 +8,7 @@ This document provides a practical guide for running end-to-end scenario tests a
 
 - Docker and Docker Compose installed
 - Python 3.9+ with `confluent-kafka` (install: `pip install -r simulator/requirements.txt`)
-- Java 11+ and Maven (for building the Flink job)
+- Java 17+ and Maven 3.9+ (for building the Flink job)
 - Ports `8080`, `8081`, `9092` available on localhost
 
 ---
@@ -53,6 +53,7 @@ docker exec flink-jobmanager flink run \
   --kafka.bootstrap.servers kafka:29092 \
   --orders.topic Orders \
   --sms.commands.topic sms-commands \
+  --dead.letter.topic dead-letter-events \
   --consumer.group.id delayed-order-sms-flink \
   --checkpoint.storage.path file:///opt/flink/checkpoints \
   --parallelism 1
@@ -106,10 +107,10 @@ docker exec kafka bash -c "kafka-console-consumer --bootstrap-server kafka:29092
 ```
 
 **Monitor the Flink UI:**
-Open `http://localhost:8081` — check job status, checkpoints, and backpressure.
+Open [http://localhost:8081](http://localhost:8081) — check job status, checkpoints, and backpressure.
 
 **Monitor Kafka topics via UI:**
-Open `http://localhost:8080` — browse `Orders`, `sms-commands`, `dead-letter-events`.
+Open [http://localhost:8080](http://localhost:8080) — browse `Orders`, `sms-commands`, `dead-letter-events`.
 
 ---
 
@@ -184,3 +185,4 @@ To also remove all Kafka data and Flink checkpoints:
 
 ```bash
 docker compose down -v
+```

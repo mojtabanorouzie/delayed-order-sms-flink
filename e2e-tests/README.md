@@ -8,7 +8,7 @@ This document provides a practical guide for running end-to-end scenario tests a
 
 - Docker and Docker Compose installed
 - Python 3.9+ with `confluent-kafka` (install: `pip install -r simulator/requirements.txt`)
-- Java 11+ and Maven (for building the Flink job)
+- Java 17+ and Maven 3.9+ (for building the Flink job)
 - Ports `8080`, `8081`, `9092` available on localhost
 
 ---
@@ -28,6 +28,7 @@ docker compose ps
 ```
 
 All five services should show `healthy` or `running`:
+
 - `kafka`
 - `kafka-ui`
 - `flink-jobmanager`
@@ -53,6 +54,7 @@ docker exec flink-jobmanager flink run \
   --kafka.bootstrap.servers kafka:29092 \
   --orders.topic Orders \
   --sms.commands.topic sms-commands \
+  --dead.letter.topic dead-letter-events \
   --consumer.group.id delayed-order-sms-flink \
   --checkpoint.storage.path file:///opt/flink/checkpoints \
   --parallelism 1
@@ -65,7 +67,8 @@ docker exec flink-jobmanager flink list 2>&1
 ```
 
 Expected output:
-```
+
+```text
 Delayed Order SMS Detection Job (RUNNING)
 ```
 
@@ -106,23 +109,23 @@ docker exec kafka bash -c "kafka-console-consumer --bootstrap-server kafka:29092
 ```
 
 **Monitor the Flink UI:**
-Open `http://localhost:8081` — check job status, checkpoints, and backpressure.
+Open [http://localhost:8081](http://localhost:8081) — check job status, checkpoints, and backpressure.
 
 **Monitor Kafka topics via UI:**
-Open `http://localhost:8080` — browse `Orders`, `sms-commands`, `dead-letter-events`.
+Open [http://localhost:8080](http://localhost:8080) — browse `Orders`, `sms-commands`, `dead-letter-events`.
 
 ---
 
 ## Expected Results Per Scenario
 
 | Scenario | Orders | Expected SMS | Actual Behavior |
-|----------|--------|-------------|----------------|
+| --- | --- | --- | --- |
 | **delayed-orders** | 5 | 5 SEND_DELAY_SMS | ✅ One per order, emitted after expectedDeliveryTime passes |
 | **on-time-orders** | 5 | 0 | ✅ Order reaches DELIVERED before deadline, no SMS |
 | **cancelled-orders** | 5 | 0 | ✅ Order reaches CANCELLED before deadline, no SMS |
 | **duplicate-events** | 5 | 5 (not 10) | ✅ Duplicate events deduplicated, exactly one SMS per order |
 | **eta-updated-orders** | 5 | 5 | ✅ SMS timed against the *updated* expectedDeliveryTime |
-| **mixed-orders** | 5 | ~1-2 (varies) | ✅ Only delayed-type orders emit SMS |
+| **mixed-orders** | 5 | 0-2 (varies) | ✅ Only delayed-type orders emit SMS (25% rate over 5 orders) |
 
 ---
 
@@ -167,6 +170,7 @@ To verify idempotency, run the **duplicate-events** scenario and check that the 
 For manual failure recovery testing, see `docs/runbooks/failure-test-runbook.md`.
 
 Quick flow:
+
 1. Submit job, run `failure-recovery` scenario
 2. Cancel the Flink job via UI or CLI
 3. Re-submit the job (it will restore from the latest checkpoint)
@@ -184,3 +188,4 @@ To also remove all Kafka data and Flink checkpoints:
 
 ```bash
 docker compose down -v
+```

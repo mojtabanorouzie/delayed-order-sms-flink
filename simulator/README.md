@@ -703,44 +703,9 @@ This validates:
 
 ---
 
-## Suggested Makefile Commands
-
-From the repository root:
-
-```bash
-make simulate
-make simulate-dry-run
-make simulate-on-time
-make simulate-delayed
-make simulate-cancelled
-make simulate-eta-updated
-make simulate-duplicates
-make simulate-out-of-order
-make simulate-failure-recovery
-make simulate-mixed
-```
-
-Example with custom order count:
-
-```bash
-ORDERS_COUNT=100 make simulate-mixed
-```
-
-Example dry-run:
-
-```bash
-ORDERS_COUNT=3 make simulate-dry-run
-```
-
----
-
 ## Verifying Produced Events
 
-Using Kafka UI:
-
-```text
-http://localhost:8080
-```
+Using Kafka UI at [http://localhost:8080](http://localhost:8080):
 
 Open topic:
 

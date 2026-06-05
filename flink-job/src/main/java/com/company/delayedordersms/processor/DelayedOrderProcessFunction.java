@@ -101,6 +101,7 @@ public class DelayedOrderProcessFunction extends KeyedProcessFunction<String, Or
         long expectedDeliveryTimeMs = current.getExpectedDeliveryTime().toEpochMilli();
 
         if (expectedDeliveryTimeMs <= now) {
+            deleteRegisteredTimer(context, current);
             emitDelaySms(current, context.timerService().currentProcessingTime(), out);
             return;
         }

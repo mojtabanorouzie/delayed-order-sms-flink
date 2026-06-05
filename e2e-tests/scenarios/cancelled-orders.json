@@ -13,7 +13,7 @@
       "value": {
         "orderId": "{{orderId}}",
         "status": "CREATED",
-        "expectedDeliveryTime": "now+5s",
+        "expectedDeliveryTime": "now+30s",
         "createdAt": "now",
         "lastUpdatedAt": "now",
         "eventTime": "now",
@@ -33,7 +33,7 @@
       "value": {
         "orderId": "{{orderId}}",
         "status": "CANCELLED",
-        "expectedDeliveryTime": "now+5s",
+        "expectedDeliveryTime": "now+30s",
         "createdAt": "now",
         "lastUpdatedAt": "now+5s",
         "eventTime": "now+5s",

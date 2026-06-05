@@ -21,7 +21,7 @@ class JobConfigTest {
 
     @Test
     void shouldParseStateTtlDaysArg() {
-        JobConfig config = JobConfig.fromArgs(new String[]{"--state-ttl-days", "14"});
+        JobConfig config = JobConfig.fromArgs(new String[]{"--state.ttl.days", "14"});
         assertThat(config.stateTtlDays()).isEqualTo(14);
     }
 
@@ -29,7 +29,7 @@ class JobConfigTest {
     void shouldParseAllArgs() {
         JobConfig config = JobConfig.fromArgs(new String[]{
                 "--parallelism", "4",
-                "--state-ttl-days", "14"
+                "--state.ttl.days", "14"
         });
         assertThat(config.parallelism()).isEqualTo(4);
         assertThat(config.stateTtlDays()).isEqualTo(14);

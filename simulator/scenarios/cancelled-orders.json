@@ -10,7 +10,7 @@
       "step": 1,
       "delayAfterPreviousEventMs": 0,
       "messageKey": "{{orderId}}",
-      "etaOffset": "-30s",
+      "etaOffset": "+30s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
@@ -33,7 +33,7 @@
       "step": 2,
       "delayAfterPreviousEventMs": 1000,
       "messageKey": "{{orderId}}",
-      "etaOffset": "-30s",
+      "etaOffset": "+30s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",

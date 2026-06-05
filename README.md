@@ -1,68 +1,53 @@
-# Delayed Order SMS Flink
+# Delayed Order SMS — Flink
 
-An Apache Flink streaming job that detects delayed orders in real time and emits idempotent SMS commands for customer care.
+[![Java 17+](https://img.shields.io/badge/java-17+-orange.svg)](https://adoptium.net/)
+[![Apache Flink 1.19](https://img.shields.io/badge/flink-1.19-blue.svg)](https://flink.apache.org/)
+[![Apache Kafka](https://img.shields.io/badge/kafka-KRaft-black.svg)](https://kafka.apache.org/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg)](https://docs.docker.com/compose/)
+
+An Apache Flink streaming job that detects delayed food/delivery orders in real time and emits idempotent SMS commands for customer care.
 
 ## Problem Statement
 
-When customer orders pass their expected delivery time without being delivered or cancelled, we want to trigger a customer care SMS such as:
+When an order passes its expected delivery time without being delivered or cancelled, we want to trigger a customer care SMS:
 
 > "We are sorry for the delay. We are checking the issue with your order."
 
-This project does **not** send SMS directly. It emits an idempotent command to a Kafka topic; a downstream notification service can consume that command and send the actual SMS.
-
-## Goals
-
-- Build a local end-to-end stream processing environment
-- Simulate realistic order events
-- Process order events using Apache Flink
-- Detect orders that pass their expected delivery time
-- Emit a `SEND_DELAY_SMS` command for delayed orders
-- Avoid duplicate SMS commands
-- Practice Flink: Kafka Source/Sink, Keyed State, Processing Time Timers, Checkpointing, Failure Recovery, Savepoints, Idempotency
-- Prepare a production proposal
-
-## Non-Goals
-
-- Sending real SMS messages
-- Connecting directly to external SMS providers from Flink
-- Building a production-ready system in the first phase
-- Handling all possible order lifecycle complexities from day one
+This project does **not** send SMS directly. It emits an idempotent `SEND_DELAY_SMS` command to a Kafka topic; a downstream notification service consumes that command and sends the actual SMS.
 
 ## Architecture
 
-```
+```text
 Order Event Simulator
-        |
-        v
-Kafka Topic: Orders (compacted, keyed by orderId)
-        |
-        v
-Apache Flink Job
-        |
-        v
-Kafka Topic: sms-commands
-        |
-        v
-Notification Service / SMS Orchestrator  (not implemented in this POC)
+        │
+        ▼
+Kafka Topic: Orders  (compacted, keyed by orderId)
+        │
+        ▼
+Apache Flink Job  (KeyedProcessFunction + processing-time timers)
+        │
+        ├──▶ Kafka Topic: sms-commands
+        └──▶ Kafka Topic: dead-letter-events
 ```
 
-**Processing Logic:**
-1. Read order state events from Kafka topic `Orders`
-2. Deserialize JSON into `OrderState` objects
+**Processing logic:**
+
+1. Read order state snapshots from the `Orders` topic
+2. Deserialize JSON → `OrderState`; route malformed messages to `dead-letter-events`
 3. Key by `orderId`
-4. `KeyedProcessFunction` maintains state (status, expectedDeliveryTime, delaySmsEmitted) and registers processing-time timers
-5. When timer fires and order is not delivered/cancelled, emit `SEND_DELAY_SMS` command to `sms-commands`
-6. Invalid/malformed events are routed to `dead-letter-events`
+4. `KeyedProcessFunction` maintains per-order state and registers a processing-time timer at `expectedDeliveryTime`
+5. On timer fire: if the order is still active (not delivered/cancelled), emit one `SEND_DELAY_SMS` command
+6. Stale out-of-order updates (older `lastUpdatedAt`) are ignored; the `delaySmsEmitted` flag prevents duplicate commands
 
 ## Project Structure
 
-```
+```text
 delayed-order-sms-flink/
 ├── README.md
 ├── .gitignore
 ├── docker-compose.yml
-├── run_scenario.py
-├── strip_jackson.py
+├── run_scenario.py            # manual scenario runner
 │
 ├── docs/
 │   ├── adr/
@@ -76,14 +61,13 @@ delayed-order-sms-flink/
 │       └── production-runbook.md
 │
 ├── schemas/
-│   ├── order-events/
-│   │   └── order-state.schema.json
-│   └── sms-commands/
-│       └── send-delay-sms-command.schema.json
+│   ├── order-events/order-state.schema.json
+│   └── sms-commands/send-delay-sms-command.schema.json
 │
 ├── simulator/
 │   ├── README.md
 │   ├── requirements.txt
+│   ├── Dockerfile
 │   ├── scenarios/
 │   └── src/
 │
@@ -93,28 +77,16 @@ delayed-order-sms-flink/
 │   └── src/
 │       ├── main/java/com/company/delayedordersms/
 │       │   ├── DelayedOrderSmsJob.java
+│       │   ├── config/JobConfig.java
 │       │   ├── model/
-│       │   │   ├── OrderState.java
-│       │   │   ├── OrderStatus.java
-│       │   │   ├── OrderDelayState.java
-│       │   │   ├── SmsCommand.java
-│       │   │   └── DeadLetterEvent.java
-│       │   ├── processor/
-│       │   │   └── DelayedOrderProcessFunction.java
-│       │   ├── serde/
-│       │   │   ├── OrderStateDeserializationFunction.java
-│       │   │   ├── OrderStateParser.java
-│       │   │   └── DeadLetterEventSerializationSchema.java
-│       │   └── config/
-│       │       └── JobConfig.java
+│       │   ├── processor/DelayedOrderProcessFunction.java
+│       │   └── serde/
 │       └── test/java/com/company/delayedordersms/
-│           ├── config/
-│           ├── processor/
-│           └── serde/
 │
 ├── e2e-tests/
 │   ├── README.md
-│   └── run_e2e.py
+│   ├── run_e2e.py
+│   └── scenarios/
 │
 └── proposal/
     └── production-proposal.md
@@ -123,14 +95,14 @@ delayed-order-sms-flink/
 ## Kafka Topics
 
 | Topic | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `Orders` | Compacted | Latest order state snapshots, keyed by `orderId` |
 | `sms-commands` | Regular | Delay SMS commands emitted by Flink |
-| `dead-letter-events` | Regular | Invalid, malformed, or unsupported events |
+| `dead-letter-events` | Regular | Malformed or invalid events |
 
 ## Event Contracts
 
-### Input: OrderState (on `Orders` topic)
+### Input — OrderState (`Orders` topic)
 
 ```json
 {
@@ -143,14 +115,14 @@ delayed-order-sms-flink/
   "lastUpdatedAt": "2026-05-12T18:45:02Z",
   "eventTime": "2026-05-12T18:45:00Z",
   "stateLogs": [
-    { "status": "CREATED", "at": "2026-05-12T18:30:00Z" },
+    { "status": "CREATED",  "at": "2026-05-12T18:30:00Z" },
     { "status": "ACCEPTED", "at": "2026-05-12T18:45:00Z" }
   ],
   "schemaVersion": 1
 }
 ```
 
-### Output: SendDelaySmsCommand (on `sms-commands` topic)
+### Output — SendDelaySmsCommand (`sms-commands` topic)
 
 ```json
 {
@@ -166,144 +138,135 @@ delayed-order-sms-flink/
 }
 ```
 
-The `commandId` is idempotent: `{orderId}:DELAY_SMS`. Downstream services deduplicate on this key.
+`commandId = {orderId}:DELAY_SMS` is the idempotency key — downstream services deduplicate on it.
 
 ## Time Semantics
 
-This POC uses **processing time** timers. The business question is: *"Has the real current time passed the expected delivery time?"* Therefore, timers fire based on wall-clock time. Events still carry `eventTime` for observability and future event-time processing.
+Processing-time timers are used intentionally. The business question is *"has wall-clock time passed the expected delivery time?"*, not replay fidelity. Events still carry `eventTime` for observability and future event-time migration.
+
+See [ADR-0001](docs/adr/0001-processing-time-vs-event-time.md).
 
 ## Local Docker Environment
 
 | Service | Description | URL / Port |
-|---|---|---|
-| Kafka | Local broker in KRaft mode | `localhost:9092` |
-| Kafka UI | Topic browser | http://localhost:8080 |
-| Flink JobManager | Cluster manager + REST API | http://localhost:8081 |
-| Flink TaskManager | Worker | - |
-| Kafka Init | Creates topics on startup | - |
-
-From host: `localhost:9092`. From inside Docker network: `kafka:29092`.
+| --- | --- | --- |
+| Kafka | KRaft-mode broker | `localhost:9092` |
+| Kafka UI | Topic browser | [localhost:8080](http://localhost:8080) |
+| Flink JobManager | Cluster manager + REST API | [localhost:8081](http://localhost:8081) |
+| Flink TaskManager | Worker | — |
 
 ## Running Locally
 
 ### Prerequisites
 
 - Docker and Docker Compose
-- Python 3.9+ with `confluent-kafka` (`pip install -r simulator/requirements.txt`)
+- Python 3.9+ (`pip install -r simulator/requirements.txt`)
 - Java 17+ and Maven 3.9+
 - Ports `8080`, `8081`, `9092` available
 
-### 1. Start Infrastructure
+### 1. Start infrastructure
 
 ```bash
 docker compose up -d
-docker compose ps   # wait until all services are healthy/running
+docker compose ps   # wait until all services are healthy
 ```
 
-### 2. Build and Submit Flink Job
+### 2. Build and submit the Flink job
 
 ```bash
 mvn clean package -f flink-job/pom.xml
 
 docker exec flink-jobmanager flink run \
   -c com.company.delayedordersms.DelayedOrderSmsJob \
-  /opt/flink/usrlib/delayed-order-sms-flink-job-0.1.0.jar \
+  /opt/flink/usrlib/delayed-order-sms-flink-job.jar \
   --kafka.bootstrap.servers kafka:29092 \
   --orders.topic Orders \
   --sms.commands.topic sms-commands \
+  --dead.letter.topic dead-letter-events \
   --consumer.group.id delayed-order-sms-flink \
   --checkpoint.storage.path file:///opt/flink/checkpoints \
   --parallelism 1
 ```
 
 Verify:
+
 ```bash
-docker exec flink-jobmanager flink list 2>&1
-# Expected: Delayed Order SMS Detection Job (RUNNING)
+docker exec flink-jobmanager flink list
+# Expected: Delayed Order SMS Detection Job  (RUNNING)
 ```
 
-### 3. Run Simulator Scenarios
+### 3. Run scenarios manually
 
 ```bash
-python run_scenario.py delayed-orders     --orders-count 5
-python run_scenario.py on-time-orders     --orders-count 5
+python run_scenario.py delayed-orders      --orders-count 5
+python run_scenario.py on-time-orders      --orders-count 5
 python run_scenario.py cancelled-orders    --orders-count 5
 python run_scenario.py duplicate-events    --orders-count 5
 python run_scenario.py eta-updated-orders  --orders-count 5
 python run_scenario.py mixed-orders        --orders-count 5
 ```
 
-### 4. Verify Output
+### 4. Verify output
 
 ```bash
-# Consume SMS commands
+# SMS commands
 docker exec kafka kafka-console-consumer \
   --bootstrap-server kafka:29092 \
   --topic sms-commands --from-beginning \
   --max-messages 50 --timeout-ms 20000
 
-# Check dead letter queue
+# Dead-letter queue
 docker exec kafka kafka-console-consumer \
   --bootstrap-server kafka:29092 \
   --topic dead-letter-events --from-beginning \
   --max-messages 10 --timeout-ms 5000
 ```
 
-**UIs:** Flink at http://localhost:8081, Kafka at http://localhost:8080.
+**UIs:** Flink → [http://localhost:8081](http://localhost:8081) · Kafka → [http://localhost:8080](http://localhost:8080)
 
-### 5. Tear Down
+### 5. Tear down
 
 ```bash
-docker compose down         # keep data
-docker compose down -v      # remove all data
+docker compose down       # keep volumes
+docker compose down -v    # remove all data
 ```
-
-## Verified Test Results
-
-| Scenario | Orders | SMS | Key Behavior |
-|---|---|---|---|
-| delayed-orders | 5 | 5 | One SMS per order after expectedDeliveryTime |
-| on-time-orders | 5 | 0 | Delivered before deadline, no SMS |
-| cancelled-orders | 5 | 0 | Cancelled before deadline, no SMS |
-| duplicate-events | 5 (10 events) | 5 | Exactly-once: duplicates produce only 1 SMS each |
-| eta-updated-orders | 5 | 5 | Timer uses updated expectedDeliveryTime |
-| mixed-orders | 5 | varies (~1-2) | Only delayed-type orders emit SMS |
-
-### Verified Behaviors
-
-- **Exactly-once deduplication**: duplicate events produce only 1 SMS per order
-- **Idempotency**: each `commandId = orderId + ":DELAY_SMS"` appears at most once
-- **On-time suppression**: orders reaching DELIVERED before deadline produce 0 SMS
-- **Cancellation suppression**: orders reaching CANCELLED before deadline produce 0 SMS
-- **ETA updates**: job uses the latest `expectedDeliveryTime` for timer evaluation
-- **Fault tolerance**: checkpoints every 10s; transient Kafka errors self-resolve
-- **Dead-letter queue**: remains empty for all tested scenarios
 
 ## E2E Tests
 
 ```bash
-python e2e-tests/run_e2e.py            # run all 6 scenarios
+python e2e-tests/run_e2e.py             # run all scenarios, clean up after
 python e2e-tests/run_e2e.py --no-cleanup  # leave infrastructure running
 ```
 
+See [e2e-tests/README.md](e2e-tests/README.md) for details.
+
+## Verified Test Results
+
+| Scenario | Orders | SMS | Behaviour |
+| --- | --- | --- | --- |
+| delayed-orders | 5 | 5 | One SMS per order after `expectedDeliveryTime` |
+| on-time-orders | 5 | 0 | Delivered before deadline — no SMS |
+| cancelled-orders | 5 | 0 | Cancelled before deadline — no SMS |
+| duplicate-events | 5 (10 events) | 5 | Exactly-once: duplicates → 1 SMS each |
+| eta-updated-orders | 5 | 5 | Timer tracks the updated `expectedDeliveryTime` |
+| mixed-orders | 5 | 0–2 | Only delayed orders emit SMS (25% rate over 5 orders) |
+
 ## Common Issues
 
-| Symptom | Cause | Solution |
-|---|---|---|
-| `CoordinatorNotAvailableException` in TaskManager logs | Kafka not yet ready | Self-resolves |
-| `kafka-init` exited | Topics already exist | Harmless; verify with `kafka-topics --list` |
-| SMS not appearing immediately | Timer uses processing time | Wait for `expectedDeliveryTime` to pass |
-| `TimeoutException` from consumer | No new messages | Normal; check `Processed a total of N messages` |
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `CoordinatorNotAvailableException` in TaskManager | Kafka not yet ready | Self-resolves |
+| `kafka-init` exited with 0 | Topics already exist | Harmless — verify with `kafka-topics --list` |
+| SMS not appearing immediately | Processing-time timer | Wait for `expectedDeliveryTime` to pass |
+| `TimeoutException` from consumer | No new messages | Normal — check `Processed a total of N messages` |
 
 ## Design Decisions
 
-See [docs/adr/](docs/adr/) for Architecture Decision Records:
-- [ADR-0001](docs/adr/0001-processing-time-vs-event-time.md): Processing time vs event time
-- [ADR-0002](docs/adr/0002-sms-idempotency-strategy.md): SMS idempotency strategy
-
-See [docs/rfc/](docs/rfc/) for the full architecture RFC.
-See [docs/runbooks/](docs/runbooks/) for operational runbooks.
-See [proposal/](proposal/) for the production deployment proposal.
+- [ADR-0001](docs/adr/0001-processing-time-vs-event-time.md) — Processing time vs event time
+- [ADR-0002](docs/adr/0002-sms-idempotency-strategy.md) — SMS idempotency strategy
+- [RFC](docs/rfc/delayed-order-detection-rfc.md) — Full architecture RFC
+- [Runbooks](docs/runbooks/) — Operational runbooks
+- [Production proposal](proposal/production-proposal.md)
 
 ## License
 

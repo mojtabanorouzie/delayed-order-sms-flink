@@ -16,7 +16,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,14 +27,39 @@ FLINK_JAR_PATH = os.path.join(
 )
 
 TOPIC_SMS_COMMANDS = "sms-commands"
+TOPIC_REFUND_COMMANDS = "refund-commands"
+TOPIC_COURIER_COMMANDS = "courier-pause-commands"
+TOPIC_RESTAURANT_ALERTS = "restaurant-alerts"
+TOPIC_SURGE_SIGNALS = "surge-pricing-signals"
 
+# Expected counts per scenario per output topic.
+# Values are int (exact) or tuple (inclusive range).
 EXPECTED_SMS = {
     "delayed-orders": 5,
     "on-time-orders": 0,
     "cancelled-orders": 0,
-    "duplicate-events": 5,  # NOT 10 — idempotent
+    "duplicate-events": 5,   # idempotent — NOT 10
     "eta-updated-orders": 5,
-    "mixed-orders": (0, 2),  # 25% of 5 orders → 0-2 delayed (small-N variance)
+    "mixed-orders": (0, 2),  # 25% of 5 → small-N variance
+}
+
+EXPECTED_REFUNDS = {
+    "severely-delayed-refund": 5,
+}
+
+EXPECTED_COURIER_PAUSES = {
+    # At least 1 PAUSE when 8+ active orders for the same courier
+    "courier-overload": (1, 1),
+}
+
+EXPECTED_RESTAURANT_ALERTS = {
+    # At least 1 CRITICAL alert when avg pickup > 15 min in the window
+    "restaurant-bottleneck": (1, 5),
+}
+
+EXPECTED_SURGE_SIGNALS = {
+    # 1 SURGE_PRICING signal: demandFactor=1.0, weatherFactor=1.2(RAIN) → multiplier=1.6 > 1.15 threshold
+    "surge-pricing": (1, 3),
 }
 
 SCENARIO_WAIT_SECONDS = {
@@ -44,6 +69,10 @@ SCENARIO_WAIT_SECONDS = {
     "duplicate-events": 15,
     "eta-updated-orders": 25,
     "mixed-orders": 25,
+    "severely-delayed-refund": 15,
+    "courier-overload": 15,
+    "restaurant-bottleneck": 30,  # window.size.seconds=10 + processing headroom
+    "surge-pricing": 30,          # window.size.seconds=10 + processing headroom
 }
 
 
@@ -51,13 +80,11 @@ SCENARIO_WAIT_SECONDS = {
 class E2EResult:
     scenario: str
     passed: bool
-    expected: str
-    actual_sms_count: int
+    checks: dict[str, str] = field(default_factory=dict)   # topic → "actual (expected)"
     error: str | None = None
 
 
 def run(cmd: list[str], cwd: str | None = None, check: bool = True) -> subprocess.CompletedProcess:
-    """Run a command with output captured."""
     return subprocess.run(
         cmd,
         cwd=cwd or PROJECT_ROOT,
@@ -68,7 +95,6 @@ def run(cmd: list[str], cwd: str | None = None, check: bool = True) -> subproces
 
 
 def poll_healthy(timeout: int = 120) -> bool:
-    """Poll `docker compose ps` until all services report healthy/running."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = subprocess.run(
@@ -113,7 +139,6 @@ def poll_healthy(timeout: int = 120) -> bool:
 
 
 def build_flink_jar() -> bool:
-    """Build the Flink fat JAR (requires JAVA_HOME pointing to JDK 17+)."""
     print("[BUILD] Compiling Flink job...")
     mvn_path = shutil.which("mvn")
     if not mvn_path:
@@ -148,135 +173,79 @@ def build_flink_jar() -> bool:
     return True
 
 
-def submit_flink_job() -> str | None:
-    """Upload the JAR and start the Flink job. Returns the job-id or None."""
-    jar_path = FLINK_JAR_PATH
-    if not os.path.isfile(jar_path):
-        # Try the cleaner jar name pattern
+def copy_jar_to_container() -> str | None:
+    """Copy the fat JAR into the jobmanager container. Returns the in-container path or None."""
+    jar_src = FLINK_JAR_PATH
+    if not os.path.isfile(jar_src):
         candidates = [
-            f for f in os.listdir(os.path.dirname(jar_path))
+            os.path.join(os.path.dirname(jar_src), f)
+            for f in os.listdir(os.path.dirname(jar_src))
             if f.endswith(".jar") and "original" not in f
         ]
-        if candidates:
-            jar_path = os.path.join(os.path.dirname(jar_path), candidates[0])
-        else:
-            print(f"[ERROR] No JAR found in {os.path.dirname(jar_path)}")
+        if not candidates:
+            print("[ERROR] No JAR found in flink-job/target/")
             return None
+        jar_src = candidates[0]
 
-    jar_name = os.path.basename(jar_path)
-    upload_url = f"{FLINK_API}/jars/upload"
+    container_path = f"/tmp/{FLINK_JAR_NAME}"
+    print("[DOCKER] Copying JAR to jobmanager container...")
+    result = subprocess.run(
+        ["docker", "cp", jar_src, f"flink-jobmanager:{container_path}"],
+        cwd=PROJECT_ROOT, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"[ERROR] docker cp failed: {result.stderr}")
+        return None
+    return container_path
 
-    print(f"[FLINK] Uploading {jar_name} ...")
-    try:
-        import requests
-    except ImportError:
-        # Fall back to subprocess + curl
-        result = subprocess.run(
-            [
-                "curl", "-s", "-X", "POST",
-                "-H", "Expect:",
-                "-F", f"jarfile=@{jar_path}",
-                upload_url,
-            ],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            print(f"[ERROR] Upload failed: {result.stderr}")
-            return None
-        resp = json.loads(result.stdout)
-    else:
-        with open(jar_path, "rb") as f:
-            resp_raw = requests.post(upload_url, files={"jarfile": (jar_name, f)})
-        if resp_raw.status_code != 200:
-            print(f"[ERROR] Upload HTTP {resp_raw.status_code}: {resp_raw.text}")
-            return None
-        resp = resp_raw.json()
 
-    jar_filename = resp.get("filename", "")
-    if not jar_filename:
-        jar_filename = jar_name
+def submit_job(entry_class: str, program_args: list[str], label: str) -> str | None:
+    """Submit a Flink job inside the container. Returns job-id hex or None."""
+    container_jar = f"/tmp/{FLINK_JAR_NAME}"
+    cmd = [
+        "docker", "exec", "flink-jobmanager",
+        "flink", "run", "-d",
+        "-c", entry_class,
+        container_jar,
+    ] + program_args
 
-    # Find the jar id from the files list
-    jar_id = None
-    for part in resp.get("files", []):
-        if part.get("name") == jar_filename:
-            jar_id = part.get("id")
+    print(f"[FLINK] Submitting {label}...")
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+
+    stderr = (result.stderr or "").strip()
+    stdout = (result.stdout or "").strip()
+
+    job_id = None
+    for line in (stdout.splitlines() + stderr.splitlines()):
+        line = line.strip()
+        if line and len(line) >= 32:
+            for token in line.split():
+                token = token.rstrip(".")
+                if len(token) == 32 and all(c in "0123456789abcdef" for c in token):
+                    job_id = token
+                    break
+        if job_id:
             break
-    if not jar_id:
-        # Try direct id in response
-        jar_id = resp.get("filename", "").replace("/", "_")
 
-    # Run the job
-    run_url = f"{FLINK_API}/jars/{jar_id}/run"
-    run_payload = {
-        "entryClass": "com.company.delayedordersms.DelayedOrderSmsJob",
-        "programArgs": (
-            "--kafka.bootstrap.servers kafka:29092 "
-            "--orders.topic Orders "
-            "--sms.commands.topic sms-commands "
-            "--consumer.group.id delayed-order-sms-flink "
-            "--checkpoint.storage.path file:///opt/flink/checkpoints "
-            "--parallelism 1"
-        ),
-    }
-
-    print("[FLINK] Starting job...")
-    try:
-        import requests
-    except ImportError:
-        result = subprocess.run(
-            [
-                "curl", "-s", "-X", "POST",
-                "-H", "Content-Type: application/json",
-                "-d", json.dumps(run_payload),
-                run_url,
-            ],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            print(f"[ERROR] Job submission failed: {result.stderr}")
-            return None
-        run_resp = json.loads(result.stdout)
+    if job_id:
+        print(f"  {label} submitted: {job_id}")
     else:
-        run_raw = requests.post(run_url, json=run_payload)
-        if run_raw.status_code != 200:
-            print(f"[ERROR] Job submission HTTP {run_raw.status_code}: {run_raw.text}")
-            return None
-        run_resp = run_raw.json()
-
-    job_id = run_resp.get("jobid", "")
-    print(f"  Job submitted: {job_id}")
+        print(f"  WARNING: Could not parse job ID for {label}")
+        for line in stdout.splitlines()[:5]:
+            print(f"    stdout> {line}")
+        for line in stderr.splitlines()[:5]:
+            print(f"    stderr> {line}")
     return job_id
 
 
-def poll_job_running(job_id: str, timeout: int = 60) -> bool:
-    """Poll Flink REST API until the job is RUNNING."""
-    deadline = time.monotonic() + timeout
-    url = f"{FLINK_API}/jobs/{job_id}"
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(url) as f:
-                job = json.loads(f.read())
-            state = job.get("state", "")
-            if state == "RUNNING":
-                print(f"  Job {job_id} is RUNNING")
-                return True
-            print(f"  Job state: {state}")
-        except (urllib.error.URLError, json.JSONDecodeError) as exc:
-            print(f"  Flink API not ready: {exc}")
-        time.sleep(2)
-    print(f"[ERROR] Job {job_id} did not reach RUNNING within {timeout}s")
-    return False
-
-
-def consume_sms_count(timeout_ms: int = 30000, max_messages: int = 100) -> int:
-    """Consume messages from the sms-commands topic and count unique commandIds."""
+def consume_topic_count(topic: str, timeout_ms: int = 30000, max_messages: int = 200) -> int:
+    """Consume from a topic and return the number of unique commandId / alertId values."""
     cmd = [
         "docker", "exec", "kafka",
         "bash", "-c",
         f"kafka-console-consumer "
         f"--bootstrap-server kafka:29092 "
-        f"--topic {TOPIC_SMS_COMMANDS} "
+        f"--topic {topic} "
         f"--from-beginning "
         f"--max-messages {max_messages} "
         f"--timeout-ms {timeout_ms} "
@@ -284,24 +253,21 @@ def consume_sms_count(timeout_ms: int = 30000, max_messages: int = 100) -> int:
     ]
     result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
     lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
-    command_ids = set()
+    unique_ids: set[str] = set()
     for line in lines:
-        if "commandId" in line:
-            try:
-                obj = json.loads(line)
-                cid = obj.get("commandId", "")
-                if cid:
-                    command_ids.add(cid)
-            except json.JSONDecodeError:
-                pass
-        elif "Processed a total of" in line:
-            # End marker, ignore
+        if "{" not in line:
             continue
-    return len(command_ids)
+        try:
+            obj = json.loads(line)
+            uid = obj.get("commandId") or obj.get("alertId") or obj.get("signalId") or ""
+            if uid:
+                unique_ids.add(uid)
+        except json.JSONDecodeError:
+            pass
+    return len(unique_ids)
 
 
-def run_scenario(name: str, orders_count: int = 5) -> subprocess.CompletedProcess:
-    """Run a single scenario inside the Docker simulator service."""
+def run_scenario(name: str, orders_count: int = 5, topic: str = "Orders") -> subprocess.CompletedProcess:
     return subprocess.run(
         [
             "docker", "compose", "--profile", "e2e", "run", "--rm",
@@ -309,7 +275,7 @@ def run_scenario(name: str, orders_count: int = 5) -> subprocess.CompletedProces
             "--scenario", name,
             "--orders-count", str(orders_count),
             "--kafka-bootstrap-servers", "kafka:29092",
-            "--orders-topic", "Orders",
+            "--orders-topic", topic,
         ],
         cwd=PROJECT_ROOT,
         capture_output=True,
@@ -317,16 +283,34 @@ def run_scenario(name: str, orders_count: int = 5) -> subprocess.CompletedProces
     )
 
 
-def validate_sms_count(scenario: str, actual: int) -> bool:
-    """Check whether the actual SMS count matches expectations."""
-    expected = EXPECTED_SMS[scenario]
+def inject_weather(region: str, condition: str) -> bool:
+    """Produce a single weather JSON event to the weather-data topic."""
+    from datetime import datetime, timezone
+    weather_json = json.dumps({
+        "region": region,
+        "condition": condition,
+        "temperature": 15.0,
+        "windSpeed": 10.0,
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "schemaVersion": 1,
+    })
+    cmd = [
+        "docker", "exec", "kafka", "bash", "-c",
+        f"echo '{weather_json}' | kafka-console-producer "
+        "--bootstrap-server kafka:29092 "
+        "--topic weather-data",
+    ]
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=15)
+    return result.returncode == 0
+
+
+def validate_count(actual: int, expected: int | tuple[int, int]) -> bool:
     if isinstance(expected, tuple):
         return expected[0] <= actual <= expected[1]
     return actual == expected
 
 
-def expected_str(scenario: str) -> str:
-    expected = EXPECTED_SMS[scenario]
+def expected_str(expected: int | tuple[int, int]) -> str:
     if isinstance(expected, tuple):
         return f"{expected[0]}-{expected[1]}"
     return str(expected)
@@ -340,41 +324,27 @@ def main() -> int:
                         help="Orders per scenario (default: 5)")
     args = parser.parse_args()
 
-    scenarios = [
-        "delayed-orders",
-        "on-time-orders",
-        "cancelled-orders",
-        "duplicate-events",
-        "eta-updated-orders",
-        "mixed-orders",
-    ]
-
     results: list[E2EResult] = []
 
-    # ---- Phase 1: Start infrastructure ----
+    # ── Phase 1: Infrastructure ──────────────────────────────────────
     print("=" * 60)
     print("Phase 1: Starting infrastructure")
     print("=" * 60)
 
-    # Tear down any previous run first
-    subprocess.run(
-        ["docker", "compose", "down", "-v"],
-        cwd=PROJECT_ROOT, capture_output=True,
-    )
+    subprocess.run(["docker", "compose", "down", "-v"], cwd=PROJECT_ROOT, capture_output=True)
     time.sleep(3)
 
-    result = subprocess.run(
+    up = subprocess.run(
         ["docker", "compose", "up", "-d"],
         cwd=PROJECT_ROOT, capture_output=True, text=True,
     )
-    if result.returncode != 0:
-        print(f"[ERROR] docker compose up failed:\n{result.stdout}\n{result.stderr}")
+    if up.returncode != 0:
+        print(f"[ERROR] docker compose up failed:\n{up.stdout}\n{up.stderr}")
         return 1
 
     if not poll_healthy():
         return 1
 
-    # Ensure Kafka topics exist (kafka-init may not have finished)
     print("[KAFKA] Creating topics...")
     topics_cmd = (
         "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
@@ -383,7 +353,18 @@ def main() -> int:
         "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
         "--topic sms-commands --partitions 3 --replication-factor 1 && "
         "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
-        "--topic dead-letter-events --partitions 3 --replication-factor 1"
+        "--topic dead-letter-events --partitions 3 --replication-factor 1 && "
+        "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
+        "--topic refund-commands --partitions 8 --replication-factor 1 && "
+        "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
+        "--topic courier-pause-commands --partitions 8 --replication-factor 1 && "
+        "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
+        "--topic restaurant-alerts --partitions 4 --replication-factor 1 && "
+        "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
+        "--topic weather-data --partitions 4 --replication-factor 1 "
+        "--config cleanup.policy=compact --config min.cleanable.dirty.ratio=0.01 --config segment.ms=60000 && "
+        "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists "
+        "--topic surge-pricing-signals --partitions 8 --replication-factor 1"
     )
     subprocess.run(
         ["docker", "exec", "kafka", "bash", "-c", topics_cmd],
@@ -391,168 +372,276 @@ def main() -> int:
     )
     print("  Topics ready")
 
-    # Fix Flink checkpoint volume permissions (Docker volume mounts as root on Windows)
     print("[PERM] Fixing checkpoint volume permissions...")
     for container in ("flink-jobmanager", "flink-taskmanager"):
-        chown_result = subprocess.run(
+        chown = subprocess.run(
             ["docker", "exec", "-u", "root", container,
              "chown", "-R", "flink:flink", "/opt/flink/checkpoints", "/opt/flink/savepoints"],
             cwd=PROJECT_ROOT, capture_output=True, text=True,
         )
-        if chown_result.returncode != 0:
-            print(f"  chown {container} (non-fatal): {chown_result.stderr.strip()}")
-        else:
-            print(f"  {container} OK")
+        status = "OK" if chown.returncode == 0 else f"(non-fatal: {chown.stderr.strip()})"
+        print(f"  {container} {status}")
 
-    # ---- Phase 2: Build & submit Flink job ----
+    # ── Phase 2: Build & submit all Flink jobs ──────────────────────
     print("\n" + "=" * 60)
-    print("Phase 2: Build & submit Flink job")
+    print("Phase 2: Build & submit Flink jobs")
     print("=" * 60)
 
     if not build_flink_jar():
         return 1
 
-    # Copy JAR into container at a non-bind-mount path to avoid permission issues
-    jar_src = FLINK_JAR_PATH
-    if not os.path.isfile(jar_src):
-        candidates = [
-            os.path.join(os.path.dirname(jar_src), f)
-            for f in os.listdir(os.path.dirname(jar_src))
-            if f.endswith(".jar") and "original" not in f
-        ]
-        if not candidates:
-            print("[ERROR] No JAR found in flink-job/target/")
-            return 1
-        jar_src = candidates[0]
+    if not copy_jar_to_container():
+        return 1
 
-    print("[DOCKER] Copying JAR to jobmanager container...")
-    subprocess.run(
-        [
-            "docker", "cp", jar_src,
-            f"flink-jobmanager:/tmp/{FLINK_JAR_NAME}",
-        ],
-        cwd=PROJECT_ROOT, check=True,
+    base_args = [
+        "--kafka.bootstrap.servers", "kafka:29092",
+        "--orders.topic", "Orders",
+        "--checkpoint.storage.path", "file:///opt/flink/checkpoints",
+        "--parallelism", "1",
+    ]
+
+    submit_job(
+        "com.company.delayedordersms.DelayedOrderSmsJob",
+        base_args + ["--sms.commands.topic", "sms-commands",
+                     "--consumer.group.id", "delayed-order-sms-flink"],
+        "DelayedOrderSmsJob",
+    )
+    submit_job(
+        "com.company.delayedordersms.AutoRefundJob",
+        base_args + ["--refund.commands.topic", "refund-commands",
+                     "--consumer.group.id", "auto-refund-flink",
+                     "--refund.delay.minutes", "0"],
+        "AutoRefundJob",
+    )
+    submit_job(
+        "com.company.delayedordersms.CourierOverloadJob",
+        base_args + ["--courier.commands.topic", "courier-pause-commands",
+                     "--consumer.group.id", "courier-overload-flink",
+                     "--overload.threshold", "8",
+                     "--resume.threshold", "5"],
+        "CourierOverloadJob",
+    )
+    submit_job(
+        "com.company.delayedordersms.RestaurantBottleneckJob",
+        base_args + ["--restaurant.alerts.topic", "restaurant-alerts",
+                     "--consumer.group.id", "restaurant-bottleneck-flink",
+                     "--window.size.seconds", "10",
+                     "--alert.threshold.minutes", "15",
+                     "--baseline.minutes", "8"],
+        "RestaurantBottleneckJob",
+    )
+    submit_job(
+        "com.company.delayedordersms.SurgePricingJob",
+        base_args + ["--surge.signals.topic", "surge-pricing-signals",
+                     "--consumer.group.id", "surge-pricing-flink",
+                     "--window.size.seconds", "10",
+                     "--at.risk.threshold.minutes", "25",
+                     "--surge.threshold", "1.15",
+                     "--demand.weight", "0.5"],
+        "SurgePricingJob",
     )
 
-    # Submit via `flink run` inside the container
-    print("[FLINK] Submitting job...")
-    submit_result = subprocess.run(
-        [
-            "docker", "exec", "flink-jobmanager",
-            "flink", "run", "-d",
-            "-c", "com.company.delayedordersms.DelayedOrderSmsJob",
-            f"/tmp/{FLINK_JAR_NAME}",
-            "--kafka.bootstrap.servers", "kafka:29092",
-            "--orders.topic", "Orders",
-            "--sms.commands.topic", "sms-commands",
-            "--consumer.group.id", "delayed-order-sms-flink",
-            "--checkpoint.storage.path", "file:///opt/flink/checkpoints",
-            "--parallelism", "1",
-        ],
-        cwd=PROJECT_ROOT, capture_output=True, text=True,
-    )
+    time.sleep(8)  # Let all five jobs reach RUNNING state
 
-    stderr = (submit_result.stderr or "").strip()
-    stdout = (submit_result.stdout or "").strip()
-
-    # Extract job-id hex (32 chars) from combined output
-    job_id = None
-    for line in (stdout.splitlines() + stderr.splitlines()):
-        line = line.strip()
-        # WARNING lines sometimes contain hex-like tokens; prefer lines that are pure hex
-        if line and len(line) >= 32:
-            tokens = line.split()
-            for token in tokens:
-                token = token.rstrip(".")  # some output adds a trailing dot
-                if len(token) == 32 and all(c in "0123456789abcdef" for c in token):
-                    job_id = token
-                    break
-        if job_id:
-            break
-
-    if job_id:
-        print(f"  Job submitted: {job_id}")
-    else:
-        print(f"  ERROR: Could not parse job ID from submit output:")
-        for line in stdout.splitlines()[:10]:
-            print(f"    stdout> {line}")
-        for line in stderr.splitlines()[:10]:
-            print(f"    stderr> {line}")
-        print("  Continuing anyway...")
-
-    time.sleep(5)  # Give Flink a moment to start
-
-    # ---- Phase 3: Run scenarios ----
+    # ── Phase 3: SMS scenarios ───────────────────────────────────────
     print("\n" + "=" * 60)
-    print("Phase 3: Running scenarios")
+    print("Phase 3: SMS scenarios")
     print("=" * 60)
 
-    previous_total = 0
+    sms_scenarios = [
+        "delayed-orders",
+        "on-time-orders",
+        "cancelled-orders",
+        "duplicate-events",
+        "eta-updated-orders",
+        "mixed-orders",
+    ]
 
-    for scenario in scenarios:
-        print(f"\n--- Scenario: {scenario} ---")
-        print(f"  Running ...")
-        scenario_result = run_scenario(scenario, orders_count=args.orders_count)
-        if scenario_result.returncode != 0:
-            print(f"  Scenario failed (exit {scenario_result.returncode})")
-            print(f"  stderr: {scenario_result.stderr[:300]}")
-            results.append(E2EResult(
-                scenario=scenario, passed=False,
-                expected=expected_str(scenario), actual_sms_count=-1,
-                error=f"Simulator exit {scenario_result.returncode}: {scenario_result.stderr[:200]}",
-            ))
+    prev_sms = 0
+    for scenario in sms_scenarios:
+        print(f"\n--- {scenario} ---")
+        sr = run_scenario(scenario, orders_count=args.orders_count)
+        if sr.returncode != 0:
+            results.append(E2EResult(scenario=scenario, passed=False,
+                                     error=f"Simulator exit {sr.returncode}: {sr.stderr[:200]}"))
             continue
 
-        wait_sec = SCENARIO_WAIT_SECONDS.get(scenario, 15)
-        print(f"  Waiting {wait_sec}s for processing...")
-        time.sleep(wait_sec)
+        wait = SCENARIO_WAIT_SECONDS.get(scenario, 15)
+        print(f"  Waiting {wait}s...")
+        time.sleep(wait)
 
-        print("  Consuming SMS from sms-commands topic...")
-        raw_count = consume_sms_count(timeout_ms=30000)
-        sms_count = raw_count - previous_total
-        previous_total = raw_count
+        raw = consume_topic_count(TOPIC_SMS_COMMANDS)
+        actual = raw - prev_sms
+        prev_sms = raw
 
-        passed = validate_sms_count(scenario, sms_count)
-        status = "PASS" if passed else "FAIL"
-        print(f"  [{status}] SMS count: {sms_count} (expected: {expected_str(scenario)})")
-
+        expected = EXPECTED_SMS[scenario]
+        passed = validate_count(actual, expected)
+        print(f"  [{'PASS' if passed else 'FAIL'}] sms-commands: {actual} "
+              f"(expected {expected_str(expected)})")
         results.append(E2EResult(
             scenario=scenario,
             passed=passed,
-            expected=expected_str(scenario),
-            actual_sms_count=sms_count,
+            checks={"sms-commands": f"{actual} (expected {expected_str(expected)})"},
         ))
 
-    # ---- Phase 4: Report ----
+    # ── Phase 4: Refund scenario ─────────────────────────────────────
+    print("\n" + "=" * 60)
+    print("Phase 4: Auto-refund scenario")
+    print("=" * 60)
+
+    prev_refund = 0
+    for scenario, expected in EXPECTED_REFUNDS.items():
+        print(f"\n--- {scenario} ---")
+        sr = run_scenario(scenario, orders_count=args.orders_count)
+        if sr.returncode != 0:
+            results.append(E2EResult(scenario=scenario, passed=False,
+                                     error=f"Simulator exit {sr.returncode}: {sr.stderr[:200]}"))
+            continue
+
+        wait = SCENARIO_WAIT_SECONDS.get(scenario, 15)
+        print(f"  Waiting {wait}s...")
+        time.sleep(wait)
+
+        raw = consume_topic_count(TOPIC_REFUND_COMMANDS)
+        actual = raw - prev_refund
+        prev_refund = raw
+
+        passed = validate_count(actual, expected)
+        print(f"  [{'PASS' if passed else 'FAIL'}] refund-commands: {actual} "
+              f"(expected {expected_str(expected)})")
+        results.append(E2EResult(
+            scenario=scenario,
+            passed=passed,
+            checks={"refund-commands": f"{actual} (expected {expected_str(expected)})"},
+        ))
+
+    # ── Phase 5: Courier overload scenario ───────────────────────────
+    print("\n" + "=" * 60)
+    print("Phase 5: Courier overload scenario")
+    print("=" * 60)
+
+    prev_courier = 0
+    for scenario, expected in EXPECTED_COURIER_PAUSES.items():
+        print(f"\n--- {scenario} ---")
+        sr = run_scenario(scenario, orders_count=args.orders_count)
+        if sr.returncode != 0:
+            results.append(E2EResult(scenario=scenario, passed=False,
+                                     error=f"Simulator exit {sr.returncode}: {sr.stderr[:200]}"))
+            continue
+
+        wait = SCENARIO_WAIT_SECONDS.get(scenario, 15)
+        print(f"  Waiting {wait}s...")
+        time.sleep(wait)
+
+        raw = consume_topic_count(TOPIC_COURIER_COMMANDS)
+        actual = raw - prev_courier
+        prev_courier = raw
+
+        passed = validate_count(actual, expected)
+        print(f"  [{'PASS' if passed else 'FAIL'}] courier-pause-commands: {actual} "
+              f"(expected {expected_str(expected)})")
+        results.append(E2EResult(
+            scenario=scenario,
+            passed=passed,
+            checks={"courier-pause-commands": f"{actual} (expected {expected_str(expected)})"},
+        ))
+
+    # ── Phase 6: Restaurant bottleneck scenario ───────────────────────
+    print("\n" + "=" * 60)
+    print("Phase 6: Restaurant bottleneck scenario")
+    print("=" * 60)
+
+    prev_alerts = 0
+    for scenario, expected in EXPECTED_RESTAURANT_ALERTS.items():
+        print(f"\n--- {scenario} ---")
+        sr = run_scenario(scenario, orders_count=args.orders_count)
+        if sr.returncode != 0:
+            results.append(E2EResult(scenario=scenario, passed=False,
+                                     error=f"Simulator exit {sr.returncode}: {sr.stderr[:200]}"))
+            continue
+
+        wait = SCENARIO_WAIT_SECONDS.get(scenario, 30)
+        print(f"  Waiting {wait}s for window timer to fire...")
+        time.sleep(wait)
+
+        raw = consume_topic_count(TOPIC_RESTAURANT_ALERTS)
+        actual = raw - prev_alerts
+        prev_alerts = raw
+
+        passed = validate_count(actual, expected)
+        print(f"  [{'PASS' if passed else 'FAIL'}] restaurant-alerts: {actual} "
+              f"(expected {expected_str(expected)})")
+        results.append(E2EResult(
+            scenario=scenario,
+            passed=passed,
+            checks={"restaurant-alerts": f"{actual} (expected {expected_str(expected)})"},
+        ))
+
+    # ── Phase 7: Surge pricing scenario ─────────────────────────────
+    print("\n" + "=" * 60)
+    print("Phase 7: Dynamic surge pricing scenario")
+    print("=" * 60)
+
+    prev_signals = 0
+    for scenario, expected in EXPECTED_SURGE_SIGNALS.items():
+        print(f"\n--- {scenario} ---")
+
+        print("  Injecting RAIN weather for zone-surge-e2e...")
+        if not inject_weather("zone-surge-e2e", "RAIN"):
+            results.append(E2EResult(scenario=scenario, passed=False,
+                                     error="Failed to inject weather event"))
+            continue
+        time.sleep(2)  # Give the job time to receive and store the weather event
+
+        sr = run_scenario(scenario, orders_count=args.orders_count)
+        if sr.returncode != 0:
+            results.append(E2EResult(scenario=scenario, passed=False,
+                                     error=f"Simulator exit {sr.returncode}: {sr.stderr[:200]}"))
+            continue
+
+        wait = SCENARIO_WAIT_SECONDS.get(scenario, 30)
+        print(f"  Waiting {wait}s for window timer to fire...")
+        time.sleep(wait)
+
+        raw = consume_topic_count(TOPIC_SURGE_SIGNALS)
+        actual = raw - prev_signals
+        prev_signals = raw
+
+        passed = validate_count(actual, expected)
+        print(f"  [{'PASS' if passed else 'FAIL'}] surge-pricing-signals: {actual} "
+              f"(expected {expected_str(expected)})")
+        results.append(E2EResult(
+            scenario=scenario,
+            passed=passed,
+            checks={"surge-pricing-signals": f"{actual} (expected {expected_str(expected)})"},
+        ))
+
+    # ── Phase 8: Results ─────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("RESULTS")
     print("=" * 60)
 
-    header = f"{'Scenario':<25} {'Expected':<10} {'Actual':<8} {'Status':<8}"
+    header = f"{'Scenario':<30} {'Status':<8} {'Details'}"
     print(header)
-    print("-" * len(header))
+    print("-" * 70)
 
     all_passed = True
     for r in results:
         status = "PASS" if r.passed else "FAIL"
-        print(f"{r.scenario:<25} {r.expected:<10} {r.actual_sms_count:<8} {status:<8}")
-        if not r.passed and r.error:
-            print(f"  Error: {r.error}")
+        details = " | ".join(r.checks.values()) if r.checks else (r.error or "")
+        print(f"{r.scenario:<30} {status:<8} {details}")
         if not r.passed:
             all_passed = False
 
     passed_count = sum(1 for r in results if r.passed)
     print(f"\n{passed_count}/{len(results)} scenarios passed")
 
-    # ---- Phase 5: Tear down ----
+    # ── Phase 9: Teardown ────────────────────────────────────────────
     if not args.no_cleanup:
         print("\n" + "=" * 60)
-        print("Phase 5: Tearing down")
+        print("Phase 9: Tearing down")
         print("=" * 60)
-        subprocess.run(
-            ["docker", "compose", "down", "-v"],
-            cwd=PROJECT_ROOT, capture_output=True,
-        )
+        subprocess.run(["docker", "compose", "down", "-v"], cwd=PROJECT_ROOT, capture_output=True)
         print("  Infrastructure removed")
     else:
         print("\nSkipping cleanup (--no-cleanup). Infrastructure still running.")

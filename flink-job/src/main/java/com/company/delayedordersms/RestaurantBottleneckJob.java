@@ -1,13 +1,13 @@
 package com.company.delayedordersms;
 
-import com.company.delayedordersms.config.DelayedOrderSmsJobConfig;
+import com.company.delayedordersms.config.RestaurantBottleneckJobConfig;
 import com.company.delayedordersms.model.DeadLetterEvent;
+import com.company.delayedordersms.model.OpsAlert;
 import com.company.delayedordersms.model.OrderState;
-import com.company.delayedordersms.model.SmsCommand;
-import com.company.delayedordersms.processor.DelayedOrderProcessFunction;
+import com.company.delayedordersms.processor.RestaurantBottleneckProcessFunction;
 import com.company.delayedordersms.serde.DeadLetterEventSerializationSchema;
+import com.company.delayedordersms.serde.OpsAlertSerializationSchema;
 import com.company.delayedordersms.serde.OrderStateDeserializationFunction;
-import com.company.delayedordersms.serde.SmsCommandSerializationSchema;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
@@ -20,10 +20,10 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
-public class DelayedOrderSmsJob {
+public class RestaurantBottleneckJob {
 
     public static void main(String[] args) throws Exception {
-        DelayedOrderSmsJobConfig config = DelayedOrderSmsJobConfig.fromArgs(args);
+        RestaurantBottleneckJobConfig config = RestaurantBottleneckJobConfig.fromArgs(args);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
@@ -50,9 +50,9 @@ public class DelayedOrderSmsJob {
                 .setValueOnlyDeserializer(new SimpleStringSchema())
                 .build();
 
-        KafkaSink<SmsCommand> sink = KafkaSink.<SmsCommand>builder()
+        KafkaSink<OpsAlert> alertSink = KafkaSink.<OpsAlert>builder()
                 .setBootstrapServers(config.kafkaBootstrapServers())
-                .setRecordSerializer(new SmsCommandSerializationSchema(config.smsCommandsTopic()))
+                .setRecordSerializer(new OpsAlertSerializationSchema(config.restaurantAlertsTopic()))
                 .build();
 
         KafkaSink<DeadLetterEvent> dlqSink = KafkaSink.<DeadLetterEvent>builder()
@@ -66,29 +66,34 @@ public class DelayedOrderSmsJob {
                 .process(new OrderStateDeserializationFunction())
                 .name("Parse Order State");
 
-        DataStream<DeadLetterEvent> parseFailures = orders
-                .getSideOutput(OrderStateDeserializationFunction.DEAD_LETTER_TAG);
-
-        parseFailures
+        orders.getSideOutput(OrderStateDeserializationFunction.DEAD_LETTER_TAG)
                 .sinkTo(dlqSink)
                 .name("Kafka Sink - Dead Letter (Parse Failures)");
 
-        SingleOutputStreamOperator<SmsCommand> commands = orders
-                .keyBy(OrderState::getOrderId)
-                .process(new DelayedOrderProcessFunction(config.stateTtlDays()))
-                .name("Detect Delayed Orders");
+        SingleOutputStreamOperator<OpsAlert> alerts = orders
+                .keyBy(OrderState::getStoreId)
+                .process(new RestaurantBottleneckProcessFunction(
+                        config.stateTtlDays(),
+                        config.windowSizeSeconds(),
+                        config.alertThresholdMinutes(),
+                        config.baselineMinutes(),
+                        config.alertEnabled()
+                ))
+                .name("Detect Restaurant Queue Bottleneck");
 
-        DataStream<DeadLetterEvent> invalidOrders = commands
-                .getSideOutput(DelayedOrderProcessFunction.INVALID_ORDER_TAG);
+        DataStream<DeadLetterEvent> invalidOrders = alerts
+                .getSideOutput(RestaurantBottleneckProcessFunction.INVALID_ORDER_TAG);
 
         invalidOrders
                 .sinkTo(dlqSink)
                 .name("Kafka Sink - Dead Letter (Invalid Orders)");
 
-        commands
-                .sinkTo(sink)
-                .name("Kafka Sink - SMS Commands");
+        if (config.alertEnabled()) {
+            alerts
+                    .sinkTo(alertSink)
+                    .name("Kafka Sink - Restaurant Alerts");
+        }
 
-        env.execute("Delayed Order SMS Detection Job");
+        env.execute("Restaurant Queue Bottleneck Detection");
     }
 }

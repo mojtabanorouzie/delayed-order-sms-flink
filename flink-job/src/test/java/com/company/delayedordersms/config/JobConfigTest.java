@@ -8,30 +8,39 @@ class JobConfigTest {
 
     @Test
     void shouldUseDefaultValues() {
-        JobConfig config = JobConfig.fromArgs(new String[]{});
+        DelayedOrderSmsJobConfig config = DelayedOrderSmsJobConfig.fromArgs(new String[]{});
         assertThat(config.parallelism()).isEqualTo(1);
         assertThat(config.stateTtlDays()).isEqualTo(7);
+        assertThat(config.consumerGroupId()).isEqualTo("delayed-order-sms-flink");
+        assertThat(config.ordersTopic()).isEqualTo("Orders");
+        assertThat(config.smsCommandsTopic()).isEqualTo("sms-commands");
     }
 
     @Test
     void shouldParseParallelismArg() {
-        JobConfig config = JobConfig.fromArgs(new String[]{"--parallelism", "4"});
+        DelayedOrderSmsJobConfig config = DelayedOrderSmsJobConfig.fromArgs(
+                new String[]{"--parallelism", "4"});
         assertThat(config.parallelism()).isEqualTo(4);
     }
 
     @Test
     void shouldParseStateTtlDaysArg() {
-        JobConfig config = JobConfig.fromArgs(new String[]{"--state.ttl.days", "14"});
+        DelayedOrderSmsJobConfig config = DelayedOrderSmsJobConfig.fromArgs(
+                new String[]{"--state.ttl.days", "14"});
         assertThat(config.stateTtlDays()).isEqualTo(14);
     }
 
     @Test
     void shouldParseAllArgs() {
-        JobConfig config = JobConfig.fromArgs(new String[]{
+        DelayedOrderSmsJobConfig config = DelayedOrderSmsJobConfig.fromArgs(new String[]{
                 "--parallelism", "4",
-                "--state.ttl.days", "14"
+                "--state.ttl.days", "14",
+                "--consumer.group.id", "my-group",
+                "--orders.topic", "MyOrders"
         });
         assertThat(config.parallelism()).isEqualTo(4);
         assertThat(config.stateTtlDays()).isEqualTo(14);
+        assertThat(config.consumerGroupId()).isEqualTo("my-group");
+        assertThat(config.ordersTopic()).isEqualTo("MyOrders");
     }
 }

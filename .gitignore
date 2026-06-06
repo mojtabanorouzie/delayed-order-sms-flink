@@ -16,6 +16,11 @@ __pycache__/
 # Temp files
 config_*_temp.yaml
 
+# Planning artifacts (session scratchpad, not project docs)
+IMPLEMENTATION_PLAN.md
+TECH_LEAD_IMPLEMENTATION_PLAN.md
+TECH_LEAD_PROMPT.md
+
 # Docker volumes / data
 kafka-data/
 flink-checkpoints/

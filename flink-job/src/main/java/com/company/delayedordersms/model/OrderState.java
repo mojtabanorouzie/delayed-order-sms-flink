@@ -12,11 +12,14 @@ public class OrderState implements Serializable {
     private String orderId;
     private String customerId;
     private String storeId;
+    private String courierId;
+    private String zoneId;
     private OrderStatus status;
     private Instant expectedDeliveryTime;
     private Instant createdAt;
     private Instant lastUpdatedAt;
     private Instant eventTime;
+    private double deliveryFee;
     private List<StateLog> stateLogs;
     private int schemaVersion;
 
@@ -33,6 +36,14 @@ public class OrderState implements Serializable {
 
     public String getStoreId() {
         return storeId;
+    }
+
+    public String getCourierId() {
+        return courierId;
+    }
+
+    public String getZoneId() {
+        return zoneId;
     }
 
     public OrderStatus getStatus() {
@@ -55,6 +66,10 @@ public class OrderState implements Serializable {
         return eventTime;
     }
 
+    public double getDeliveryFee() {
+        return deliveryFee;
+    }
+
     public List<StateLog> getStateLogs() {
         return stateLogs;
     }
@@ -75,6 +90,14 @@ public class OrderState implements Serializable {
         this.storeId = storeId;
     }
 
+    public void setCourierId(String courierId) {
+        this.courierId = courierId;
+    }
+
+    public void setZoneId(String zoneId) {
+        this.zoneId = zoneId;
+    }
+
     public void setStatus(OrderStatus status) {
         this.status = status;
     }
@@ -93,6 +116,10 @@ public class OrderState implements Serializable {
 
     public void setEventTime(Instant eventTime) {
         this.eventTime = eventTime;
+    }
+
+    public void setDeliveryFee(double deliveryFee) {
+        this.deliveryFee = deliveryFee;
     }
 
     public void setStateLogs(List<StateLog> stateLogs) {

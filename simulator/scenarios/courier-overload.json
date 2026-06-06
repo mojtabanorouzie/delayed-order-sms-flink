@@ -1,22 +1,22 @@
 {
-  "scenarioName": "delayed-orders",
-  "description": "Orders with past-dated ETAs that are already delayed when created.",
+  "scenarioName": "courier-overload",
+  "description": "Ten orders assigned to the same courier. At the 8th active order the CourierOverloadJob emits a PAUSE command.",
   "topic": "Orders",
   "topicType": "compacted",
   "keyField": "orderId",
-  "defaultOrderCount": 100,
+  "defaultOrderCount": 10,
   "events": [
     {
       "step": 1,
-      "delayAfterPreviousEventMs": 0,
+      "delayAfterPreviousEventMs": 100,
       "messageKey": "{{orderId}}",
-      "etaOffset": "-30s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
+        "courierId": "courier-overload-e2e",
         "status": "CREATED",
-        "expectedDeliveryTime": "now",
+        "expectedDeliveryTime": "now+30m",
         "createdAt": "now",
         "lastUpdatedAt": "now",
         "eventTime": "now",
@@ -32,18 +32,18 @@
     },
     {
       "step": 2,
-      "delayAfterPreviousEventMs": 1000,
+      "delayAfterPreviousEventMs": 100,
       "messageKey": "{{orderId}}",
-      "etaOffset": "-30s",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
         "storeId": "{{storeId}}",
+        "courierId": "courier-overload-e2e",
         "status": "ACCEPTED",
-        "expectedDeliveryTime": "now",
+        "expectedDeliveryTime": "now+30m",
         "createdAt": "now",
-        "lastUpdatedAt": "now+10s",
-        "eventTime": "now+10s",
+        "lastUpdatedAt": "now+5s",
+        "eventTime": "now+5s",
         "deliveryFee": 5.00,
         "stateLogs": [
           {
@@ -52,7 +52,7 @@
           },
           {
             "status": "ACCEPTED",
-            "at": "now+10s"
+            "at": "now+5s"
           }
         ],
         "schemaVersion": 1
@@ -60,8 +60,9 @@
     }
   ],
   "expectedResult": {
-    "smsCommandExpected": true,
-    "expectedSmsCommandCountPerOrder": 1,
-    "description": "One SEND_DELAY_SMS command should be emitted per delayed order immediately upon event processing."
+    "courierPauseCommandExpected": true,
+    "expectedAction": "PAUSE",
+    "expectedCourierId": "courier-overload-e2e",
+    "description": "One COURIER_PAUSE command for courier-overload-e2e when its 8th active order is registered."
   }
 }

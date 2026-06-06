@@ -1,13 +1,13 @@
 package com.company.delayedordersms;
 
-import com.company.delayedordersms.config.DelayedOrderSmsJobConfig;
+import com.company.delayedordersms.config.AutoRefundJobConfig;
 import com.company.delayedordersms.model.DeadLetterEvent;
 import com.company.delayedordersms.model.OrderState;
-import com.company.delayedordersms.model.SmsCommand;
-import com.company.delayedordersms.processor.DelayedOrderProcessFunction;
+import com.company.delayedordersms.model.RefundCommand;
+import com.company.delayedordersms.processor.DelayedOrderRefundProcessFunction;
 import com.company.delayedordersms.serde.DeadLetterEventSerializationSchema;
 import com.company.delayedordersms.serde.OrderStateDeserializationFunction;
-import com.company.delayedordersms.serde.SmsCommandSerializationSchema;
+import com.company.delayedordersms.serde.RefundCommandSerializationSchema;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
@@ -20,10 +20,10 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
-public class DelayedOrderSmsJob {
+public class AutoRefundJob {
 
     public static void main(String[] args) throws Exception {
-        DelayedOrderSmsJobConfig config = DelayedOrderSmsJobConfig.fromArgs(args);
+        AutoRefundJobConfig config = AutoRefundJobConfig.fromArgs(args);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
@@ -50,9 +50,9 @@ public class DelayedOrderSmsJob {
                 .setValueOnlyDeserializer(new SimpleStringSchema())
                 .build();
 
-        KafkaSink<SmsCommand> sink = KafkaSink.<SmsCommand>builder()
+        KafkaSink<RefundCommand> refundSink = KafkaSink.<RefundCommand>builder()
                 .setBootstrapServers(config.kafkaBootstrapServers())
-                .setRecordSerializer(new SmsCommandSerializationSchema(config.smsCommandsTopic()))
+                .setRecordSerializer(new RefundCommandSerializationSchema(config.refundCommandsTopic()))
                 .build();
 
         KafkaSink<DeadLetterEvent> dlqSink = KafkaSink.<DeadLetterEvent>builder()
@@ -73,22 +73,28 @@ public class DelayedOrderSmsJob {
                 .sinkTo(dlqSink)
                 .name("Kafka Sink - Dead Letter (Parse Failures)");
 
-        SingleOutputStreamOperator<SmsCommand> commands = orders
+        SingleOutputStreamOperator<RefundCommand> refundCommands = orders
                 .keyBy(OrderState::getOrderId)
-                .process(new DelayedOrderProcessFunction(config.stateTtlDays()))
-                .name("Detect Delayed Orders");
+                .process(new DelayedOrderRefundProcessFunction(
+                        config.stateTtlDays(),
+                        config.refundDelayMinutes()
+                ))
+                .name("Detect Refund-Eligible Orders");
 
-        DataStream<DeadLetterEvent> invalidOrders = commands
-                .getSideOutput(DelayedOrderProcessFunction.INVALID_ORDER_TAG);
+        DataStream<DeadLetterEvent> invalidOrders = refundCommands
+                .getSideOutput(DelayedOrderRefundProcessFunction.INVALID_ORDER_TAG);
 
         invalidOrders
                 .sinkTo(dlqSink)
                 .name("Kafka Sink - Dead Letter (Invalid Orders)");
 
-        commands
-                .sinkTo(sink)
-                .name("Kafka Sink - SMS Commands");
+        // Only emit to refund-commands if refund feature is enabled
+        if (config.refundEnabled()) {
+            refundCommands
+                    .sinkTo(refundSink)
+                    .name("Kafka Sink - Refund Commands");
+        }
 
-        env.execute("Delayed Order SMS Detection Job");
+        env.execute("Auto-Refund for Severely Delayed Orders");
     }
 }

@@ -1,16 +1,16 @@
 {
-  "scenarioName": "delayed-orders",
-  "description": "Orders with past-dated ETAs that are already delayed when created.",
+  "scenarioName": "severely-delayed-refund",
+  "description": "Orders whose ETA + 30 minutes has already passed. With refund.delay.minutes=0 the refund fires immediately on event arrival; with the default 30-minute delay a timer is registered.",
   "topic": "Orders",
   "topicType": "compacted",
   "keyField": "orderId",
-  "defaultOrderCount": 100,
+  "defaultOrderCount": 5,
   "events": [
     {
       "step": 1,
       "delayAfterPreviousEventMs": 0,
       "messageKey": "{{orderId}}",
-      "etaOffset": "-30s",
+      "etaOffset": "-35m",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
@@ -32,9 +32,9 @@
     },
     {
       "step": 2,
-      "delayAfterPreviousEventMs": 1000,
+      "delayAfterPreviousEventMs": 500,
       "messageKey": "{{orderId}}",
-      "etaOffset": "-30s",
+      "etaOffset": "-35m",
       "value": {
         "orderId": "{{orderId}}",
         "customerId": "{{customerId}}",
@@ -60,8 +60,9 @@
     }
   ],
   "expectedResult": {
-    "smsCommandExpected": true,
-    "expectedSmsCommandCountPerOrder": 1,
-    "description": "One SEND_DELAY_SMS command should be emitted per delayed order immediately upon event processing."
+    "refundCommandExpected": true,
+    "expectedRefundCommandCountPerOrder": 1,
+    "expectedRefundAmountPerOrder": 2.50,
+    "description": "One AUTO_REFUND command per severely delayed order. Amount = 50% of $5.00 delivery fee = $2.50. commandId is idempotent: orderId:REFUND_30MIN."
   }
 }

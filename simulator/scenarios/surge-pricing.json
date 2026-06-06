@@ -1,0 +1,41 @@
+{
+  "scenarioName": "surge-pricing",
+  "description": "Five CREATED orders in zone-surge-e2e, each with ETA +30min (at-risk threshold is 25min). Combined with RAIN weather (injected separately), demandFactor=1.0 and weatherFactor=1.2 yields surgeMultiplier=1.6, exceeding the 1.15 threshold. With window.size.seconds=10 the timer fires within 10s.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 5,
+  "events": [
+    {
+      "step": 1,
+      "delayAfterPreviousEventMs": 100,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "{{storeId}}",
+        "zoneId": "zone-surge-e2e",
+        "courierId": "courier-001",
+        "status": "CREATED",
+        "expectedDeliveryTime": "now+30m",
+        "createdAt": "now",
+        "lastUpdatedAt": "now",
+        "eventTime": "now",
+        "deliveryFee": 5.00,
+        "stateLogs": [
+          {
+            "status": "CREATED",
+            "at": "now"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    }
+  ],
+  "expectedResult": {
+    "surgeSignalExpected": true,
+    "expectedZoneId": "zone-surge-e2e",
+    "expectedWeatherCondition": "RAIN",
+    "description": "One SURGE_PRICING signal for zone-surge-e2e. demandFactor=1.0 × weatherFactor=1.2 × demandWeight=0.5 → surgeMultiplier=1.6."
+  }
+}

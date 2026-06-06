@@ -1,0 +1,66 @@
+{
+  "scenarioName": "restaurant-bottleneck",
+  "description": "Orders at the same restaurant where pickup takes 20 minutes (ACCEPTED → PICKED_UP delta). With window.size.seconds=10 the tumbling window fires within 10s; avg 20 min > 15 min threshold → CRITICAL OpsAlert.",
+  "topic": "Orders",
+  "topicType": "compacted",
+  "keyField": "orderId",
+  "defaultOrderCount": 5,
+  "events": [
+    {
+      "step": 1,
+      "delayAfterPreviousEventMs": 0,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "store-bottleneck-e2e",
+        "status": "ACCEPTED",
+        "expectedDeliveryTime": "now+45m",
+        "createdAt": "now",
+        "lastUpdatedAt": "now",
+        "eventTime": "now",
+        "deliveryFee": 5.00,
+        "stateLogs": [
+          {
+            "status": "ACCEPTED",
+            "at": "now"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "step": 2,
+      "delayAfterPreviousEventMs": 200,
+      "messageKey": "{{orderId}}",
+      "value": {
+        "orderId": "{{orderId}}",
+        "customerId": "{{customerId}}",
+        "storeId": "store-bottleneck-e2e",
+        "status": "PICKED_UP",
+        "expectedDeliveryTime": "now+45m",
+        "createdAt": "now",
+        "lastUpdatedAt": "now+20m",
+        "eventTime": "now+20m",
+        "deliveryFee": 5.00,
+        "stateLogs": [
+          {
+            "status": "ACCEPTED",
+            "at": "now"
+          },
+          {
+            "status": "PICKED_UP",
+            "at": "now+20m"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    }
+  ],
+  "expectedResult": {
+    "restaurantAlertExpected": true,
+    "expectedSeverity": "CRITICAL",
+    "expectedStoreId": "store-bottleneck-e2e",
+    "description": "One CRITICAL OpsAlert for store-bottleneck-e2e. Avg pickup time 20 min exceeds the 15 min alert threshold."
+  }
+}

@@ -1,13 +1,13 @@
 package com.company.delayedordersms;
 
-import com.company.delayedordersms.config.DelayedOrderSmsJobConfig;
+import com.company.delayedordersms.config.CourierOverloadJobConfig;
+import com.company.delayedordersms.model.CourierCommand;
 import com.company.delayedordersms.model.DeadLetterEvent;
 import com.company.delayedordersms.model.OrderState;
-import com.company.delayedordersms.model.SmsCommand;
-import com.company.delayedordersms.processor.DelayedOrderProcessFunction;
+import com.company.delayedordersms.processor.CourierOverloadProcessFunction;
+import com.company.delayedordersms.serde.CourierCommandSerializationSchema;
 import com.company.delayedordersms.serde.DeadLetterEventSerializationSchema;
 import com.company.delayedordersms.serde.OrderStateDeserializationFunction;
-import com.company.delayedordersms.serde.SmsCommandSerializationSchema;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
@@ -20,10 +20,10 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
-public class DelayedOrderSmsJob {
+public class CourierOverloadJob {
 
     public static void main(String[] args) throws Exception {
-        DelayedOrderSmsJobConfig config = DelayedOrderSmsJobConfig.fromArgs(args);
+        CourierOverloadJobConfig config = CourierOverloadJobConfig.fromArgs(args);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
@@ -50,9 +50,9 @@ public class DelayedOrderSmsJob {
                 .setValueOnlyDeserializer(new SimpleStringSchema())
                 .build();
 
-        KafkaSink<SmsCommand> sink = KafkaSink.<SmsCommand>builder()
+        KafkaSink<CourierCommand> courierSink = KafkaSink.<CourierCommand>builder()
                 .setBootstrapServers(config.kafkaBootstrapServers())
-                .setRecordSerializer(new SmsCommandSerializationSchema(config.smsCommandsTopic()))
+                .setRecordSerializer(new CourierCommandSerializationSchema(config.courierCommandsTopic()))
                 .build();
 
         KafkaSink<DeadLetterEvent> dlqSink = KafkaSink.<DeadLetterEvent>builder()
@@ -66,29 +66,33 @@ public class DelayedOrderSmsJob {
                 .process(new OrderStateDeserializationFunction())
                 .name("Parse Order State");
 
-        DataStream<DeadLetterEvent> parseFailures = orders
-                .getSideOutput(OrderStateDeserializationFunction.DEAD_LETTER_TAG);
-
-        parseFailures
+        orders.getSideOutput(OrderStateDeserializationFunction.DEAD_LETTER_TAG)
                 .sinkTo(dlqSink)
                 .name("Kafka Sink - Dead Letter (Parse Failures)");
 
-        SingleOutputStreamOperator<SmsCommand> commands = orders
-                .keyBy(OrderState::getOrderId)
-                .process(new DelayedOrderProcessFunction(config.stateTtlDays()))
-                .name("Detect Delayed Orders");
+        SingleOutputStreamOperator<CourierCommand> courierCommands = orders
+                .keyBy(OrderState::getCourierId)
+                .process(new CourierOverloadProcessFunction(
+                        config.stateTtlDays(),
+                        config.overloadThreshold(),
+                        config.resumeThreshold(),
+                        config.pauseEnabled()
+                ))
+                .name("Detect Courier Overload");
 
-        DataStream<DeadLetterEvent> invalidOrders = commands
-                .getSideOutput(DelayedOrderProcessFunction.INVALID_ORDER_TAG);
+        DataStream<DeadLetterEvent> invalidOrders = courierCommands
+                .getSideOutput(CourierOverloadProcessFunction.INVALID_ORDER_TAG);
 
         invalidOrders
                 .sinkTo(dlqSink)
                 .name("Kafka Sink - Dead Letter (Invalid Orders)");
 
-        commands
-                .sinkTo(sink)
-                .name("Kafka Sink - SMS Commands");
+        if (config.pauseEnabled()) {
+            courierCommands
+                    .sinkTo(courierSink)
+                    .name("Kafka Sink - Courier Commands");
+        }
 
-        env.execute("Delayed Order SMS Detection Job");
+        env.execute("Courier Overload Detection & Auto-Pause");
     }
 }

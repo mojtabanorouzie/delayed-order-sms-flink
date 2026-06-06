@@ -31,6 +31,7 @@ TOPIC_REFUND_COMMANDS = "refund-commands"
 TOPIC_COURIER_COMMANDS = "courier-pause-commands"
 TOPIC_RESTAURANT_ALERTS = "restaurant-alerts"
 TOPIC_SURGE_SIGNALS = "surge-pricing-signals"
+TOPIC_DEAD_LETTER = "dead-letter-events"
 
 # Expected counts per scenario per output topic.
 # Values are int (exact) or tuple (inclusive range).
@@ -265,6 +266,32 @@ def consume_topic_count(topic: str, timeout_ms: int = 30000, max_messages: int =
         except json.JSONDecodeError:
             pass
     return len(unique_ids)
+
+
+def consume_dead_letter_count(timeout_ms: int = 8000) -> int:
+    """Return the number of events on dead-letter-events (any JSON line counts)."""
+    cmd = [
+        "docker", "exec", "kafka",
+        "bash", "-c",
+        f"kafka-console-consumer "
+        f"--bootstrap-server kafka:29092 "
+        f"--topic {TOPIC_DEAD_LETTER} "
+        f"--from-beginning "
+        f"--max-messages 50 "
+        f"--timeout-ms {timeout_ms} "
+        f"2>&1",
+    ]
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+    count = 0
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if "{" in line:
+            try:
+                json.loads(line)
+                count += 1
+            except json.JSONDecodeError:
+                pass
+    return count
 
 
 def run_scenario(name: str, orders_count: int = 5, topic: str = "Orders") -> subprocess.CompletedProcess:
@@ -635,6 +662,20 @@ def main() -> int:
 
     passed_count = sum(1 for r in results if r.passed)
     print(f"\n{passed_count}/{len(results)} scenarios passed")
+
+    # ── Dead-letter validation ────────────────────────────────────────
+    print("\n" + "=" * 60)
+    print("Dead-letter queue check")
+    print("=" * 60)
+    dlq_count = consume_dead_letter_count()
+    if dlq_count == 0:
+        print("  PASS  dead-letter-events: 0 events (expected 0)")
+    else:
+        all_passed = False
+        print(f"  FAIL  dead-letter-events: {dlq_count} events (expected 0)")
+        print("        Inspect: docker exec kafka kafka-console-consumer "
+              "--bootstrap-server kafka:29092 --topic dead-letter-events "
+              "--from-beginning --timeout-ms 5000")
 
     # ── Phase 9: Teardown ────────────────────────────────────────────
     if not args.no_cleanup:

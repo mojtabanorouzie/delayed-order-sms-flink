@@ -339,4 +339,58 @@ class CourierOverloadProcessFunctionTest {
             assertThat(pauseCount).isEqualTo(2);
         }
     }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Custom thresholds
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    class CustomThresholds {
+
+        @Test
+        void shouldRespectCustomOverloadAndResumeThresholds() throws Exception {
+            // Harness uses 8/5 defaults. Create a separate function with 4/2.
+            CourierOverloadProcessFunction fn = new CourierOverloadProcessFunction(7, 4, 2, true);
+            KeyedProcessOperator<String, OrderState, CourierCommand> operator =
+                    new KeyedProcessOperator<>(fn);
+            KeyedOneInputStreamOperatorTestHarness<String, OrderState, CourierCommand> customHarness =
+                    new KeyedOneInputStreamOperatorTestHarness<>(
+                            operator, OrderState::getCourierId, Types.STRING);
+            customHarness.open();
+
+            // 3 orders — below threshold of 4 → no output
+            for (int i = 1; i <= 3; i++) {
+                customHarness.processElement(order("order-" + i, COURIER_ID, OrderStatus.CREATED), 0);
+            }
+            // 4th order → PAUSE. Deliver 3 orders → count=1 < resumeThreshold=2 → RESUME.
+            customHarness.processElement(order("order-4", COURIER_ID, OrderStatus.CREATED), 0);
+            for (int i = 1; i <= 3; i++) {
+                customHarness.processElement(order("order-" + i, COURIER_ID, OrderStatus.DELIVERED), 0);
+            }
+
+            // extractOutputStreamRecords accumulates; expect PAUSE then RESUME
+            var allOutput = customHarness.extractOutputStreamRecords();
+            assertThat(allOutput).hasSize(2);
+            assertThat(allOutput.get(0).getValue().getAction()).isEqualTo("PAUSE");
+            assertThat(allOutput.get(1).getValue().getAction()).isEqualTo("RESUME");
+
+            customHarness.close();
+        }
+
+        @Test
+        void shouldResumeWhenAllActiveOrdersCompleted() throws Exception {
+            // PAUSE at 8, then all 8 delivered → count drops below resumeThreshold=5 → RESUME
+            sendN(8, OrderStatus.CREATED);
+            for (int i = 1; i <= 8; i++) {
+                harness.processElement(order("order-" + i, COURIER_ID, OrderStatus.DELIVERED), 0);
+            }
+
+            // extractOutputStreamRecords accumulates: PAUSE (at 8th CREATED) + RESUME (when count < 5)
+            var output = harness.extractOutputStreamRecords();
+            assertThat(output).hasSize(2);
+            assertThat(output.get(0).getValue().getAction()).isEqualTo("PAUSE");
+            assertThat(output.get(1).getValue().getAction()).isEqualTo("RESUME");
+            assertThat(output.get(1).getValue().getActiveOrderCount()).isLessThan(RESUME_THRESHOLD);
+        }
+    }
 }

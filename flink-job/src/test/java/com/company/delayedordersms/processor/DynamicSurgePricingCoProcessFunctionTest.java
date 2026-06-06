@@ -209,6 +209,65 @@ class DynamicSurgePricingCoProcessFunctionTest {
             SurgePricingSignal signal = harness.extractOutputStreamRecords().get(0).getValue();
             assertThat(signal.getSurgeMultiplier()).isLessThanOrEqualTo(MAX_MULTIPLIER);
         }
+
+        @Test
+        void orderAtExactAtRiskThresholdIsNotAtRisk() throws Exception {
+            // isAtRisk uses strictly-greater: ETA_remaining > atRiskThresholdMs
+            // At exactly 25 min remaining, demandFactor = 0/N → no surge.
+            harness.processElement2(new StreamRecord<>(weather(ZONE, "RAIN"), 0L));
+
+            long exactThresholdMs = AT_RISK_THRESHOLD_MINUTES * 60 * 1_000L;
+            for (int i = 1; i <= 5; i++) {
+                harness.processElement1(new StreamRecord<>(
+                        orderWithEta(ZONE, "order-" + i, exactThresholdMs), 0L));
+            }
+            fireWindow();
+
+            // demandFactor = 0/5 = 0.0 → combined = 1.0 + 0 = 1.0 < threshold → no signal
+            assertThat(harness.extractOutputStreamRecords()).isEmpty();
+        }
+
+        @Test
+        void subsequentWeatherUpdateOverridesPrevious() throws Exception {
+            // RAIN first, then CLEAR — the window evaluation uses the latest weather (CLEAR).
+            harness.processElement2(new StreamRecord<>(weather(ZONE, "RAIN"), 0L));
+            sendOrders(5, true);
+            // Override with CLEAR before window fires
+            harness.processElement2(new StreamRecord<>(weather(ZONE, "CLEAR"), 0L));
+            fireWindow();
+
+            // CLEAR factor = 0.95: combined = 1.0 + (1.0 × 0.5) × 0.95 = 1.475 > 1.15 → signal emitted
+            // But weather condition in signal must be CLEAR
+            var output = harness.extractOutputStreamRecords();
+            assertThat(output).hasSize(1);
+            assertThat(output.get(0).getValue().getWeatherCondition()).isEqualTo("CLEAR");
+            assertThat(output.get(0).getValue().getSurgeMultiplier()).isCloseTo(1.475, within(0.001));
+        }
+
+        @Test
+        void zeroDemandWeightMeansOnlyWeatherDrivesSurge() throws Exception {
+            // With demandWeight=0.0, formula = 1.0 + (demandFactor × 0.0) × weatherFactor = 1.0
+            // regardless of how many at-risk orders exist. No surge possible.
+            DynamicSurgePricingCoProcessFunction fn = new DynamicSurgePricingCoProcessFunction(
+                    7, WINDOW_SIZE_SECONDS, AT_RISK_THRESHOLD_MINUTES,
+                    SURGE_THRESHOLD, 0.0, CHANGE_THRESHOLD, MAX_MULTIPLIER, true);
+            KeyedCoProcessOperator<String, OrderState, WeatherData, SurgePricingSignal> op =
+                    new KeyedCoProcessOperator<>(fn);
+            KeyedTwoInputStreamOperatorTestHarness<String, OrderState, WeatherData, SurgePricingSignal> zeroWeightHarness =
+                    new KeyedTwoInputStreamOperatorTestHarness<>(
+                            op, OrderState::getZoneId, WeatherData::getRegion, Types.STRING);
+            zeroWeightHarness.open();
+
+            zeroWeightHarness.processElement2(new StreamRecord<>(weather(ZONE, "SNOW"), 0L));
+            for (int i = 1; i <= 5; i++) {
+                zeroWeightHarness.processElement1(new StreamRecord<>(atRiskOrder("order-" + i), 0L));
+            }
+            zeroWeightHarness.setProcessingTime(WINDOW_SIZE_SECONDS * 1_000L + 1);
+
+            // combined = 1.0 + (1.0 × 0.0) × 1.4 = 1.0 < threshold → no signal
+            assertThat(zeroWeightHarness.extractOutputStreamRecords()).isEmpty();
+            zeroWeightHarness.close();
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────

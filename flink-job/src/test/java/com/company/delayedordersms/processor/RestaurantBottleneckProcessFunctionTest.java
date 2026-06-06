@@ -180,6 +180,23 @@ class RestaurantBottleneckProcessFunctionTest {
 
             assertThat(harness.extractOutputStreamRecords()).isEmpty();
         }
+
+        @Test
+        void warningNotCriticalWhenPickupTimeExactlyAtAlertThreshold() throws Exception {
+            // avgPickupMs == alertThresholdMs exactly: condition is `> threshold` (strictly greater),
+            // so exactly-at-threshold falls through to WARNING.
+            long now = harness.getProcessingTime();
+            Instant accepted = Instant.now();
+            Instant pickedUp = accepted.plusSeconds(ALERT_THRESHOLD_MINUTES * 60L); // exactly 15 min
+
+            harness.processElement(order("order-1", OrderStatus.ACCEPTED, accepted), now);
+            harness.processElement(order("order-1", OrderStatus.PICKED_UP, pickedUp), now);
+            harness.setProcessingTime(now + WINDOW_SIZE_SECONDS * 1000L);
+
+            var output = harness.extractOutputStreamRecords();
+            assertThat(output).hasSize(1);
+            assertThat(output.get(0).getValue().getSeverity()).isEqualTo("WARNING");
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────

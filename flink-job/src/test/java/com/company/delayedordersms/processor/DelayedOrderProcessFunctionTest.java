@@ -257,4 +257,43 @@ class DelayedOrderProcessFunctionTest {
         assertThat(cmd.getOrderId()).isEqualTo("order-1");
         assertThat(cmd.getReason()).isEqualTo("ORDER_DELAYED");
     }
+
+    @Test
+    void shouldEmitSmsWhenEtaIsExactlyNow() throws Exception {
+        // Boundary: ETA == processing time. The timer fires at ETA, which is not in the future,
+        // so the function should emit immediately (same path as a past ETA).
+        Instant now = Instant.now();
+
+        OrderState order = createOrder("order-1", OrderStatus.ACCEPTED, now, now);
+        harness.setProcessingTime(now.toEpochMilli());
+        harness.processElement(new StreamRecord<>(order));
+
+        var output = harness.extractOutputStreamRecords();
+        assertThat(output).hasSize(1);
+        assertThat(output.get(0).getValue().getCommandId()).isEqualTo("order-1:DELAY_SMS");
+    }
+
+    @Test
+    void shouldTrackLatestEtaAfterRapidUpdates() throws Exception {
+        // Five ETA updates arrive in quick succession; timer must follow the last ETA.
+        Instant now = Instant.now();
+        harness.setProcessingTime(now.toEpochMilli());
+
+        Instant finalEta = now.plusSeconds(3600);
+        for (int i = 1; i <= 5; i++) {
+            Instant eta = now.plusSeconds(i * 600L); // 10, 20, 30, 40, 60 min
+            OrderState update = createOrder("order-1", OrderStatus.ACCEPTED, eta, now.plusSeconds(i));
+            harness.processElement(new StreamRecord<>(update));
+        }
+
+        // Exactly one timer registered (for the last ETA)
+        assertThat(harness.numProcessingTimeTimers()).isEqualTo(1);
+        // Timer at earlier ETAs should NOT fire an SMS
+        harness.setProcessingTime(now.plusSeconds(600).toEpochMilli());
+        assertThat(harness.extractOutputStreamRecords()).isEmpty();
+
+        // Timer at the final ETA fires the SMS
+        harness.setProcessingTime(finalEta.toEpochMilli());
+        assertThat(harness.extractOutputStreamRecords()).hasSize(1);
+    }
 }

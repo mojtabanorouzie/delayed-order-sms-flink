@@ -8,6 +8,7 @@ import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.streaming.api.operators.KeyedProcessOperator;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -475,6 +476,64 @@ class DelayedOrderRefundProcessFunctionTest {
             var output = harness.extractOutputStreamRecords();
             assertThat(output).hasSize(1);
             assertThat(output.get(0).getValue().getOrderId()).isEqualTo("o-delayed");
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Zero-delay refund (used in e2e: --refund.delay.minutes 0)
+    // ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    class ZeroDelayRefund {
+
+        private KeyedOneInputStreamOperatorTestHarness<String, OrderState, RefundCommand> zeroDelayHarness;
+
+        @BeforeEach
+        void setUpZeroDelay() throws Exception {
+            DelayedOrderRefundProcessFunction fn =
+                    new DelayedOrderRefundProcessFunction(STATE_TTL_DAYS, 0);
+            KeyedProcessOperator<String, OrderState, RefundCommand> operator =
+                    new KeyedProcessOperator<>(fn);
+            zeroDelayHarness = new KeyedOneInputStreamOperatorTestHarness<>(
+                    operator, OrderState::getOrderId, Types.STRING);
+            zeroDelayHarness.open();
+        }
+
+        @AfterEach
+        void tearDown() throws Exception {
+            zeroDelayHarness.close();
+        }
+
+        @Test
+        void shouldEmitRefundAtEtaWhenDelayIsZero() throws Exception {
+            Instant now = Instant.now();
+            Instant eta = now.plusSeconds(600);
+
+            zeroDelayHarness.setProcessingTime(now.toEpochMilli());
+            zeroDelayHarness.processElement(new StreamRecord<>(
+                    order("o1", OrderStatus.ACCEPTED, eta, now)));
+
+            // Advance to exactly ETA (no extra delay)
+            zeroDelayHarness.setProcessingTime(eta.toEpochMilli());
+
+            var output = zeroDelayHarness.extractOutputStreamRecords();
+            assertThat(output).hasSize(1);
+            assertThat(output.get(0).getValue().getOrderId()).isEqualTo("o1");
+            assertThat(output.get(0).getValue().getCommandId()).isEqualTo("o1:REFUND_0MIN");
+        }
+
+        @Test
+        void shouldEmitRefundImmediatelyWhenEtaAlreadyPassedAndDelayIsZero() throws Exception {
+            Instant now = Instant.now();
+            Instant pastEta = now.minusSeconds(60);
+
+            zeroDelayHarness.setProcessingTime(now.toEpochMilli());
+            zeroDelayHarness.processElement(new StreamRecord<>(
+                    order("o1", OrderStatus.ACCEPTED, pastEta, now)));
+
+            var output = zeroDelayHarness.extractOutputStreamRecords();
+            assertThat(output).hasSize(1);
+            assertThat(output.get(0).getValue().getOrderId()).isEqualTo("o1");
         }
     }
 }
